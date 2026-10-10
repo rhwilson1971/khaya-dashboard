@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#246b55">
+  <title>Khaya · Your network, at a glance</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="sample-data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#overview" aria-label="Khaya overview"><span class="brand-mark" data-icon="network"></span>khaya<span class="brand-dot">.</span></a>
+      <div class="workspace"><span class="workspace-icon" data-icon="home"></span><div><strong>My home</strong><span>Personal network</span></div><span class="workspace-chevron" data-icon="chevron"></span></div>
+      <div class="nav-caption">WORKSPACE</div>
+      <nav aria-label="Main navigation">
+        <a href="#overview" class="nav-item active" data-page="overview"><span data-icon="grid"></span>Overview</a>
+        <a href="#devices" class="nav-item" data-page="devices"><span data-icon="devices"></span>Devices<span class="nav-count" id="nav-count">0</span></a>
+        <a href="#map" class="nav-item" data-page="map"><span data-icon="network"></span>Network map</a>
+        <a href="#activity" class="nav-item" data-page="activity"><span data-icon="activity"></span>Activity</a>
+        <a href="#settings" class="nav-item" data-page="settings"><span data-icon="settings"></span>Settings</a>
+      </nav>
+      <div class="sidebar-bottom"><div class="local-card"><span class="local-icon" data-icon="shield"></span><strong>At home. Under control.</strong><p>Your network data stays<br>on your local machine.</p></div><button class="profile" id="help-button"><span class="avatar">K</span><span><strong>Khaya</strong><small>Setup & help</small></span><span data-icon="help"></span></button></div>
+    </aside>
+    <div class="main-shell">
+      <header class="topbar"><div class="breadcrumb"><button class="icon-button mobile-menu" id="menu-toggle" aria-label="Toggle navigation"><span data-icon="menu"></span></button><span data-icon="home"></span><span>My home</span><span class="breadcrumb-divider">/</span><strong id="breadcrumb-page">Overview</strong></div><div class="top-actions"><span class="collector-pill" id="collector-pill"><i class="status-dot unknown"></i>Connecting</span><button class="icon-button" id="refresh-button" aria-label="Refresh dashboard" title="Refresh dashboard"><span data-icon="refresh"></span></button><span class="top-avatar">K</span></div></header>
+      <main id="main" tabindex="-1">
+        <div class="page-heading"><div><div class="eyebrow">YOUR HOME, CONNECTED</div><h1 id="page-title">Network overview</h1><p id="page-description">A little clarity for everything connected.</p></div><div class="heading-actions"><button class="button secondary" id="discover-button"><span data-icon="radar"></span>Discover devices</button><button class="button primary" id="add-button"><span data-icon="plus"></span>Add device</button></div></div>
+        <div id="connection-banner" class="notice error" hidden role="alert"></div>
+        <div id="sample-banner" class="sample-banner" hidden><div class="sample-message"><span data-icon="sparkles"></span><span><strong>A look at what’s possible.</strong> You’re viewing a sample network, not live measurements.</span></div><button class="text-button" id="sample-exit">Use my network <span data-icon="arrow"></span></button></div>
+        <div id="sample-launch" class="notice" hidden><span>Your inventory is ready for its first device.</span><button class="text-button" id="sample-enter">Explore sample network <span data-icon="arrow"></span></button></div>
+        <section id="page-content" aria-live="polite"></section>
+        <footer class="page-footer"><span><i class="status-dot online"></i>Local-first. Yours by design.</span><span id="updated-label">Waiting for your local service</span></footer>
+      </main>
+    </div>
+  </div>
+  <dialog id="device-dialog" class="modal"><form id="device-form"><div class="modal-heading"><div><span class="eyebrow">DEVICE INVENTORY</span><h2 id="device-form-title">Add a device</h2></div><button type="button" class="icon-button" data-close="device-dialog" aria-label="Close device form"><span data-icon="close"></span></button></div><p class="modal-subtitle">Give your device a home on the map.</p><div class="form-grid"><label class="full">Device name<input name="name" placeholder="e.g. Office MacBook" required maxlength="100"></label><label>IP address or hostname<input name="target" placeholder="192.168.1.20" required maxlength="253" spellcheck="false"></label><label>Device type<select name="type" id="device-type"></select></label><label>Location<input name="location" placeholder="e.g. Office" maxlength="100"></label><label>Manufacturer<input name="manufacturer" placeholder="e.g. Apple" maxlength="100"></label><label>Connects to<select name="parent_id" id="device-parent"></select></label><label>Connection<select name="connection"><option value="unknown">Unknown / not documented</option><option value="wired">Wired / Ethernet</option><option value="wireless">Wireless / Wi-Fi</option></select></label><label>Health check<select name="method"><option value="icmp">ICMP echo (ping)</option><option value="heartbeat">Computer heartbeat</option><option value="none">Inventory only</option></select></label><label>MAC address <small>optional</small><input name="mac" placeholder="AA:BB:CC:DD:EE:FF" maxlength="32" spellcheck="false"></label><label class="full">Notes <small>optional</small><textarea name="notes" rows="2" placeholder="Anything worth remembering…" maxlength="2000"></textarea></label></div><p class="field-hint">ICMP shows reachability. Sleeping devices and blocked ping may appear offline. Heartbeat devices need an agent configured after saving.</p><div class="form-error" id="device-error" hidden role="alert"></div><div class="modal-footer"><button type="button" class="button secondary" data-close="device-dialog">Cancel</button><button type="submit" class="button primary" id="device-save">Add device</button></div></form></dialog>
+  <dialog id="detail-dialog" class="modal detail-modal"><div id="detail-content"></div></dialog>
+  <dialog id="discovery-dialog" class="modal discovery-modal"><div class="modal-heading"><div><span class="eyebrow">FIND YOUR DEVICES</span><h2>Network discovery</h2></div><button class="icon-button" data-close="discovery-dialog" aria-label="Close discovery"><span data-icon="close"></span></button></div><p class="modal-subtitle">Check your local subnet for devices that respond to ping.</p><form id="discovery-form"><label>Private IPv4 subnet<input id="discovery-subnet" name="subnet" placeholder="192.168.1.0/24" required></label><p class="field-hint">Up to 254 addresses (/24 or smaller). Start with your router’s LAN subnet. Devices that block ping won’t be found.</p><button class="button primary" id="scan-start" type="submit"><span data-icon="radar"></span>Start discovery</button></form><div id="discovery-results"></div><div class="form-error" id="discovery-error" hidden role="alert"></div><div class="modal-footer" id="import-footer" hidden><span id="import-count"></span><button class="button primary" id="import-button">Import selected</button></div></dialog>
+  <dialog id="help-dialog" class="modal"><div class="modal-heading"><h2>Make yourself at home.</h2><button class="icon-button" data-close="help-dialog" aria-label="Close help"><span data-icon="close"></span></button></div><div class="help-content"><p>Start by adding your router, switches, and access points. Then add your clients, choosing a parent under <strong>Connects to</strong> to build your network map.</p><h3>Discover what’s connected</h3><p>Set your LAN subnet in Settings and run discovery. Import responding devices, then give them names, types, and connections.</p><h3>Understand health</h3><p><strong>Online</strong> means a successful ping or authenticated heartbeat. <strong>Offline</strong> means repeated missed checks or an expired heartbeat. <strong>Unknown</strong> means there is no usable check yet, monitoring is disabled, or the collector encountered an error.</p><h3>Keep it running</h3><p>The collector works while the Python service runs, even with the browser closed. This dashboard measures network reachability, not CPU, memory, or application health.</p><p class="field-hint">Launch with <code>python3 -m network.server</code>. LAN access and heartbeat setup are described in the project README.</p></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
