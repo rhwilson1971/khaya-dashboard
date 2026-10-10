@@ -7,6 +7,10 @@
   <title>Khaya · Your network, at a glance</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
+  <script>
+  /* Apply the stored appearance before first paint to avoid a theme flash. */
+  try{var khayaTheme=localStorage.getItem('khaya-theme');if(khayaTheme!=='light'&&khayaTheme!=='dark')khayaTheme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.theme=khayaTheme;}catch(e){document.documentElement.dataset.theme='light';}
+  </script>
   <script src="sample-data.js" defer></script>
   <script src="app.js" defer></script>
 </head>

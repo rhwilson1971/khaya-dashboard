@@ -5,22 +5,26 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 /** Load dashboard functions into an isolated context without bootstrapping the browser. */
-function dashboard(fetchFn) {
+function dashboard(fetchFn, env={}) {
+  const store = {...(env.storage||{})};
   const elements = new Map();
   const absent = new Set(['#settings-form','.graph-area']);
   const document = {
     title: '',
+    documentElement: {dataset:{},style:{}},
     querySelector(selector) {
       if (absent.has(selector)) return null;
-      if (!elements.has(selector)) elements.set(selector, {textContent:'',innerHTML:'',hidden:false,title:'',classList:{add(){},remove(){},toggle(){}},querySelectorAll(){return [];}});
+      if (!elements.has(selector)) elements.set(selector, {textContent:'',innerHTML:'',hidden:false,title:'',content:'',classList:{add(){},remove(){},toggle(){}},querySelectorAll(){return [];},setAttribute(){},getAttribute(){return null;}});
       return elements.get(selector);
     },
     querySelectorAll() { return []; },
   };
-  const context = vm.createContext({console,document,location:{hash:'',origin:'http://127.0.0.1:8765'},window:{},localStorage:{getItem(){return 'live';},setItem(){}},setTimeout,clearTimeout,AbortController,fetch:fetchFn});
+  const matchMedia = (query)=>({matches:query.includes('dark')?!!env.darkMode:false,media:query,addEventListener(){},addListener(){},removeEventListener(){},removeListener(){}});
+  const localStorage = {getItem(k){return k in store?store[k]:(k==='khaya-mode'?'live':null);},setItem(k,v){store[k]=String(v);},removeItem(k){delete store[k];}};
+  const context = vm.createContext({console,document,location:{hash:'',origin:'http://127.0.0.1:8765'},window:{},localStorage,matchMedia,setTimeout,clearTimeout,AbortController,fetch:fetchFn});
   vm.runInContext(fs.readFileSync('static/sample-data.js','utf8'),context);
   const source = fs.readFileSync('static/app.js','utf8').replace(/initialize\(\);\s*$/,'');
-  vm.runInContext(source+'\nglobalThis.subject={state,esc,filteredDevices,layoutGraph,renderOverview,renderDevices,renderMap,renderActivity,renderSettings,graphMarkup,refresh,setMode,document};',context);
+  vm.runInContext(source+'\nglobalThis.subject={state,esc,filteredDevices,layoutGraph,renderOverview,renderDevices,renderMap,renderActivity,renderSettings,graphMarkup,refresh,setMode,openDetail,sharedAddressDevices,sharedAddressNotice,currentTheme,resolvedTheme,applyTheme,setTheme,document};',context);
   context.subject.state.snapshot = context.window.KHAYA_SAMPLE;
   context.subject.state.sample = true;
   return context.subject;
@@ -120,6 +124,28 @@ test('monitoring settings are disabled until the real service is connected',()=>
   assert.ok(!/<fieldset[^>]*disabled/.test(app.renderSettings()));
 });
 
+test('settings offers a system-synced appearance option',()=>{
+  const app=dashboard();
+  const markup=app.renderSettings();
+  assert.match(markup, /id="theme-select"/);
+  assert.match(markup, /value="system"/);
+  assert.match(markup, /value="light"/);
+  assert.match(markup, /value="dark"/);
+});
+
+test('stored dark preference overrides the OS setting',()=>{
+  const app=dashboard(undefined,{storage:{'khaya-theme':'dark'},darkMode:true});
+  assert.equal(app.currentTheme(),'dark');
+  assert.equal(app.applyTheme(),'dark');
+});
+
+test('system preference follows the OS setting',()=>{
+  const light=dashboard(undefined,{storage:{},darkMode:false});
+  assert.equal(light.applyTheme(),'light');
+  const dark=dashboard(undefined,{storage:{},darkMode:true});
+  assert.equal(dark.applyTheme(),'dark');
+});
+
 
 test('inventory does not label an undocumented connection as Ethernet',()=>{
   const app=dashboard();
@@ -127,4 +153,35 @@ test('inventory does not label an undocumented connection as Ethernet',()=>{
   const html=app.renderDevices();
   assert.ok(html.includes('Unknown connection'));
   assert.ok(!html.includes('Ethernet'));
+});
+
+/** Build an inventory with one address shared by two records. */
+function sharingFixtures(app) {
+  const base=app.state.snapshot.devices[0];
+  app.state.snapshot.devices=[
+    {...base,id:'a',name:'Office PC',target:'192.168.1.20'},
+    {...base,id:'b',name:'Replacement PC',target:'192.168.1.20'},
+    {...base,id:'c',name:'Printer',target:'192.168.1.30'},
+  ];
+}
+
+test('inventory flags every row sharing an address, and only those rows',()=>{
+  const app=dashboard();
+  sharingFixtures(app);
+  const markup=app.renderDevices();
+  assert.equal((markup.match(/shared-address-flag/g)||[]).length,2);
+  assert.match(markup,/Also used by Replacement PC/);
+  assert.match(markup,/Also used by Office PC/);
+});
+
+test('device detail links to the other record sharing its address',async()=>{
+  const app=dashboard();
+  sharingFixtures(app);
+  await app.openDetail('a');
+  const shared=app.document.querySelector('#detail-content').innerHTML;
+  assert.match(shared,/shared-address/);
+  assert.match(shared,/Replacement PC/);
+  assert.match(shared,/data-detail="b"/);
+  await app.openDetail('c');
+  assert.ok(!app.document.querySelector('#detail-content').innerHTML.includes('shared-address'));
 });

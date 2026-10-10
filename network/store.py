@@ -59,10 +59,11 @@ class Store:
         """Create the database and schema at path; initialize monitoring settings."""
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._drop_target_uniqueness()
         with self.connection() as db:
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS devices (
-                    id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL UNIQUE,
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL,
                     type TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
                     manufacturer TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
                     notes TEXT NOT NULL DEFAULT '', connection TEXT NOT NULL DEFAULT 'wired',
@@ -85,6 +86,37 @@ class Store:
             ''')
             for key, value in DEFAULTS.items():
                 db.execute('INSERT OR IGNORE INTO settings VALUES (?, ?)', (key, json.dumps(value)))
+
+    def _drop_target_uniqueness(self):
+        """Rebuild a legacy devices table that still enforces unique addresses."""
+        db = sqlite3.connect(self.path, timeout=15)
+        try:
+            row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'").fetchone()
+            if not row or 'UNIQUE' not in (row[0] or ''):
+                return
+            columns = ('id, name, target, type, location, manufacturer, mac, notes, connection,'
+                       ' parent_id, method, status, last_check, last_seen, latency,'
+                       ' failures, last_error, heartbeat_hash, created_at')
+            db.execute('PRAGMA foreign_keys=OFF')
+            db.executescript(f'''
+                CREATE TABLE devices_new (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL,
+                    type TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
+                    manufacturer TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '', connection TEXT NOT NULL DEFAULT 'wired',
+                    parent_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+                    method TEXT NOT NULL DEFAULT 'icmp', status TEXT NOT NULL DEFAULT 'unknown',
+                    last_check REAL, last_seen REAL, latency REAL, failures INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '', heartbeat_hash TEXT,
+                    created_at REAL NOT NULL
+                );
+                INSERT INTO devices_new ({columns}) SELECT {columns} FROM devices;
+                DROP TABLE devices;
+                ALTER TABLE devices_new RENAME TO devices;
+            ''')
+            db.commit()
+        finally:
+            db.close()
 
     @contextmanager
     def connection(self):
@@ -136,7 +168,11 @@ class Store:
             return self.public(db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone())
 
     def save_device(self, data, device_id=None):
-        """Create or patch a validated device; reject duplicates and cyclic parent links."""
+        """Create or patch a validated device; reject cyclic parent links.
+
+        Shared addresses are permitted: DHCP reassignments mean one address can
+        briefly belong to two records while the inventory is being updated.
+        """
         fields = ('name', 'target', 'type', 'location', 'manufacturer', 'mac', 'notes', 'connection', 'parent_id', 'method')
         if not isinstance(data, dict) or set(data) - set(fields):
             raise ValueError('Unrecognized device field.')
@@ -172,17 +208,14 @@ class Store:
                     raise ValueError('Parent device does not exist.')
                 parent = row['parent_id']
             d['parent_id'] = d['parent_id'] or None
-            try:
-                if old:
-                    db.execute('UPDATE devices SET ' + ','.join(f'{k}=?' for k in fields) + ' WHERE id=?', (*[d[k] for k in fields], device_id))
-                    if old['target'] != d['target'] or old['method'] != d['method']:
-                        db.execute("UPDATE devices SET status='unknown', last_check=NULL, last_seen=NULL, latency=NULL, failures=0, last_error='', heartbeat_hash=NULL WHERE id=?", (device_id,))
-                        db.execute('DELETE FROM observations WHERE device_id=?', (device_id,))
-                else:
-                    db.execute('INSERT INTO devices (id,' + ','.join(fields) + ',created_at) VALUES (' + ','.join('?' for _ in range(len(fields) + 2)) + ')', (device_id, *[d[k] for k in fields], time.time()))
-                    db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (time.time(), device_id, d['name'], 'unknown', 'Added to your network'))
-            except sqlite3.IntegrityError as exc:
-                raise ValueError('A device with this address or hostname already exists.') from exc
+            if old:
+                db.execute('UPDATE devices SET ' + ','.join(f'{k}=?' for k in fields) + ' WHERE id=?', (*[d[k] for k in fields], device_id))
+                if old['target'] != d['target'] or old['method'] != d['method']:
+                    db.execute("UPDATE devices SET status='unknown', last_check=NULL, last_seen=NULL, latency=NULL, failures=0, last_error='', heartbeat_hash=NULL WHERE id=?", (device_id,))
+                    db.execute('DELETE FROM observations WHERE device_id=?', (device_id,))
+            else:
+                db.execute('INSERT INTO devices (id,' + ','.join(fields) + ',created_at) VALUES (' + ','.join('?' for _ in range(len(fields) + 2)) + ')', (device_id, *[d[k] for k in fields], time.time()))
+                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (time.time(), device_id, d['name'], 'unknown', 'Added to your network'))
         return self.get_device(device_id)
 
     def delete_device(self, device_id):

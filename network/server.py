@@ -175,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         imported.append(store.save_device({'name': candidates[target]['name'], 'target': target, 'type': 'other'}))
                     except ValueError:
-                        # Only tolerate a concurrent duplicate import, not unrelated validation failures.
+                        # Only tolerate a device added concurrently, not unrelated validation failures.
                         if target not in {d['target'] for d in store.list_devices()}:
                             raise
                         skipped.append(target)

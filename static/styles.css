@@ -4,3 +4,128 @@
 .settings-form fieldset{border:0;padding:0;margin:0;min-width:0}.settings-form fieldset:disabled{opacity:.55}
 
 .graph-edge.unspecified{stroke:#b8bec5;stroke-dasharray:2 6}.legend-line.unspecified{border-top:1px dotted #b8bec5}
+
+/* Appearance setting (Settings > Appearance). Light is the default; system resolves
+   to light or dark via the OS preference and is applied as data-theme on <html>. */
+:root{color-scheme:light}
+.settings-side{display:flex;flex-direction:column;gap:22px;min-width:0}
+.appearance-body{padding:0 23px 24px}
+[data-theme="dark"]{--bg:#12161a;--surface:#1b2128;--ink:#e8edf1;--muted:#9aa5b0;--line:#2b343d;--green:#63bd97;--green-soft:#1d2f27;--red:#d98a7f;--blue:#8aa8d4;color-scheme:dark}
+[data-theme="dark"] body{background:var(--bg);color:var(--ink)}
+[data-theme="dark"] h1,[data-theme="dark"] h2,[data-theme="dark"] h3{color:var(--ink)}
+[data-theme="dark"] .sidebar{background:var(--surface)}
+[data-theme="dark"] .workspace{background:#222b33}
+[data-theme="dark"] .workspace-icon{background:var(--surface);border-color:var(--line);color:var(--muted)}
+[data-theme="dark"] .nav-caption{color:#7d8894}
+[data-theme="dark"] .nav-item{color:#9aa5b0}
+[data-theme="dark"] .nav-item:hover{background:#222b33}
+[data-theme="dark"] .nav-count{background:var(--surface);border-color:#2f4a3e}
+[data-theme="dark"] .local-card{background:linear-gradient(130deg,#1d262e,#1b2128)}
+[data-theme="dark"] .avatar,[data-theme="dark"] .top-avatar{background:#2a343d;border-color:#39444e;color:#c3ccd4}
+[data-theme="dark"] .topbar{background:rgba(27,33,40,.92)}
+[data-theme="dark"] .breadcrumb{color:#8b96a1}
+[data-theme="dark"] .breadcrumb strong{color:#c3ccd4}
+[data-theme="dark"] .breadcrumb-divider{color:#3d4852}
+[data-theme="dark"] .collector-pill{color:#9aa5b0}
+[data-theme="dark"] .icon-button{color:#9aa5b0}
+[data-theme="dark"] .icon-button:hover{background:#242e37}
+[data-theme="dark"] .eyebrow{color:#7d8894}
+[data-theme="dark"] .button.secondary{background:var(--surface);border-color:#3a4550;color:#c3ccd4}
+[data-theme="dark"] .button.secondary:hover{background:#222b33}
+[data-theme="dark"] .button.danger{background:var(--surface);border-color:#5a3a35;color:#e08d81}
+[data-theme="dark"] .button.primary{box-shadow:none}
+[data-theme="dark"] .button.primary:hover{background:#4fae86}
+[data-theme="dark"] .sample-banner{background:#25211a;border-color:#4a4232;color:#c9b995}
+[data-theme="dark"] .sample-message>span:first-child{color:#c9a86a}
+[data-theme="dark"] .sample-message strong{color:#e0c896}
+[data-theme="dark"] .sample-banner .text-button{color:#c9a86a}
+[data-theme="dark"] .notice{background:#182824;border-color:#2c4a3e;color:#a9c6b4}
+[data-theme="dark"] .notice.error{background:#2c1f1d;border-color:#5a3a35;color:#e08d81}
+[data-theme="dark"] .stat-card,[data-theme="dark"] .card{background:var(--surface)}
+[data-theme="dark"] .stat-top{color:#8b96a1}
+[data-theme="dark"] .stat-icon{background:#242e37;color:#8aa8d4}
+[data-theme="dark"] .stat-icon.green{background:#1d2f27;color:#63bd97}
+[data-theme="dark"] .stat-icon.red{background:#2c1f1d;color:#e08d81}
+[data-theme="dark"] .stat-icon.gray{background:#242e37;color:#8b96a1}
+[data-theme="dark"] .stat-bottom{color:#7d8894}
+[data-theme="dark"] .stat-bottom .positive{color:#63bd97}
+[data-theme="dark"] .card-header p{color:#7d8894}
+[data-theme="dark"] .subtle-pill{background:#222b33;border-color:#333e47;color:#8b96a1}
+[data-theme="dark"] .graph-area{background-color:#161c22;background-image:radial-gradient(#2b343d .7px,transparent .7px);border-color:#222b33}
+[data-theme="dark"] .graph-node .node-base{fill:#222b33;stroke:#39434d}
+[data-theme="dark"] .graph-node text{fill:#d5dce2}
+[data-theme="dark"] .graph-node .node-ip{fill:#7d8894}
+[data-theme="dark"] .graph-node .node-icon-background{fill:#1d2f27}
+[data-theme="dark"] .graph-node svg{stroke:#7fc7a2}
+[data-theme="dark"] .graph-edge{stroke:#3d5a4c}
+[data-theme="dark"] .graph-edge.wireless{stroke:#4a5a68}
+[data-theme="dark"] .graph-edge.unspecified{stroke:#4a5a68}
+[data-theme="dark"] .graph-controls{background:#222b33;border-color:#39434d}
+[data-theme="dark"] .graph-legend{color:#7d8894}
+[data-theme="dark"] .legend-line{border-color:#3d5a4c}
+[data-theme="dark"] .legend-line.wireless{border-color:#4a5a68}
+[data-theme="dark"] .device-icon{background:#242e37;border-color:#333e47;color:#9db4c6}
+[data-theme="dark"] .device-icon.router,[data-theme="dark"] .device-icon.switch,[data-theme="dark"] .device-icon.access_point{background:#1d2f27;color:#63bd97}
+[data-theme="dark"] .computer-meta small,[data-theme="dark"] .computer-status small{color:#7d8894}
+[data-theme="dark"] .computer-row{border-color:#242e37}
+[data-theme="dark"] .status-text{color:#8b96a1}
+[data-theme="dark"] .status-text.online{color:#63bd97}
+[data-theme="dark"] .status-text.offline{color:#e08d81}
+[data-theme="dark"] .small-card-footer{background:#161c22;color:#7d8894}
+[data-theme="dark"] .event-row{border-color:#242e37}
+[data-theme="dark"] .event-indicator{background:#1d2f27;color:#63bd97}
+[data-theme="dark"] .event-indicator.offline{background:#2c1f1d;color:#e08d81}
+[data-theme="dark"] .event-indicator.unknown{background:#242e37;color:#8b96a1}
+[data-theme="dark"] .event-meta p{color:#7d8894}
+[data-theme="dark"] .event-time{color:#69747f}
+[data-theme="dark"] .search-field svg{color:#69747f}
+[data-theme="dark"] .search-field input{background:#161c22}
+[data-theme="dark"] .toolbar-filters select{background:var(--surface)}
+[data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:var(--surface);border-color:#39434d;color:var(--ink)}
+[data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#5d6873}
+[data-theme="dark"] label{color:#9aa5b0}
+[data-theme="dark"] label small{color:#69747f}
+[data-theme="dark"] .device-table thead{background:#161c22}
+[data-theme="dark"] .device-table th{color:#7d8894}
+[data-theme="dark"] .device-table td{color:#9aa5b0;border-color:#242e37}
+[data-theme="dark"] .device-table tbody tr:hover{background:#1f2830}
+[data-theme="dark"] .device-cell strong{color:#d5dce2}
+[data-theme="dark"] .device-cell small{color:#7d8894}
+[data-theme="dark"] .connection-cell svg{color:#69747f}
+[data-theme="dark"] .table-footer{color:#7d8894}
+[data-theme="dark"] .page-footer{color:#69747f}
+[data-theme="dark"] .empty-state{color:#7d8894}
+[data-theme="dark"] .empty-state .empty-icon{background:#1d2f27;color:#63bd97}
+[data-theme="dark"] .empty-state h3{color:#d5dce2}
+[data-theme="dark"] .map-summary{color:#7d8894}
+[data-theme="dark"] .map-summary strong{color:#63bd97}
+[data-theme="dark"] .modal{background:var(--surface);border-color:#333e47}
+[data-theme="dark"] .modal-subtitle,[data-theme="dark"] .help-content p{color:#8b96a1}
+[data-theme="dark"] .field-hint{color:#69747f}
+[data-theme="dark"] .form-error{background:#2c1f1d;border-color:#5a3a35;color:#e08d81}
+[data-theme="dark"] .detail-heading p{color:#7d8894}
+[data-theme="dark"] .detail-status{background:#161c22}
+[data-theme="dark"] .detail-status p{color:#7d8894}
+[data-theme="dark"] .detail-latency{color:#63bd97}
+[data-theme="dark"] .detail-latency small{color:#7d8894}
+[data-theme="dark"] .detail-grid dt{color:#69747f}
+[data-theme="dark"] .detail-grid dd{color:#9db4c6}
+[data-theme="dark"] .detail-notes{background:#161c22;color:#8b96a1}
+[data-theme="dark"] .history-section p{color:#7d8894}
+[data-theme="dark"] .heartbeat-setup{background:#161c22;border-color:#2b343d}
+[data-theme="dark"] .heartbeat-setup p{color:#7d8894}
+[data-theme="dark"] .heartbeat-command{background:#10151a;color:#7fc7a2}
+[data-theme="dark"] .toast{background:#e8edf1;color:#12161a}
+[data-theme="dark"] .progress-track{background:#242e37}
+[data-theme="dark"] .discovered-item span{color:#7d8894}
+[data-theme="dark"] #import-count{color:#7d8894}
+[data-theme="dark"] .discovery-complete{color:#8b96a1}
+[data-theme="dark"] .settings-note p{color:#7d8894}
+
+/* Shared-address identifier (duplicate IPs during DHCP reassignment). */
+.shared-address-flag{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:600;color:#86724b;background:#fbf8f0;border:1px solid #eee8d7;border-radius:5px;padding:2px 6px;margin-left:8px;white-space:nowrap}
+.shared-address-flag svg{width:12px;height:12px}
+.notice.shared-address{align-items:flex-start}
+.notice.shared-address>svg{flex-shrink:0;margin-top:1px}
+.notice.shared-address .text-button{font-size:11px}
+[data-theme="dark"] .shared-address-flag{background:#25211a;border-color:#4a4232;color:#c9a86a}

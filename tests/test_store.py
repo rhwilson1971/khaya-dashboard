@@ -39,11 +39,40 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.device(name=' ')
 
-    def test_duplicate_address_is_rejected(self):
-        """Prevent multiple real records for the same network target."""
-        self.device()
-        with self.assertRaises(ValueError):
-            self.device(name='Other')
+    def test_duplicate_address_is_allowed_during_reassignment(self):
+        """Permit a shared address while DHCP leases are being reassigned."""
+        first = self.device(target='192.168.1.20')
+        second = self.device(name='Replacement', target='192.168.1.20')
+        self.assertEqual(second['target'], '192.168.1.20')
+        moved = self.store.save_device({'target': '192.168.1.21'}, first['id'])
+        self.assertEqual(moved['target'], '192.168.1.21')
+        back = self.store.save_device({'target': '192.168.1.20'}, first['id'])
+        self.assertEqual(back['target'], '192.168.1.20')
+        self.assertEqual(len(self.store.list_devices()), 2)
+
+    def test_existing_database_migrates_away_from_unique_addresses(self):
+        """Open a database created while addresses were unique, then allow sharing."""
+        legacy = Path(self.tmp.name) / 'legacy.db'
+        db = __import__('sqlite3').connect(legacy)
+        try:
+            db.execute('''CREATE TABLE devices (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL UNIQUE,
+                type TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
+                manufacturer TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '', connection TEXT NOT NULL DEFAULT 'wired',
+                parent_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
+                method TEXT NOT NULL DEFAULT 'icmp', status TEXT NOT NULL DEFAULT 'unknown',
+                last_check REAL, last_seen REAL, latency REAL, failures INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '', heartbeat_hash TEXT,
+                created_at REAL NOT NULL)''')
+            db.execute("INSERT INTO devices (id, name, target, type, created_at) VALUES ('a', 'Desktop', '192.168.1.20', 'computer', 1)")
+            db.commit()
+        finally:
+            db.close()
+        store = Store(legacy)
+        self.assertEqual(store.get_device('a')['target'], '192.168.1.20')
+        store.save_device({'name': 'Replacement', 'target': '192.168.1.20', 'type': 'computer'})
+        self.assertEqual(len(store.list_devices()), 2)
 
     def test_parent_cycles_and_missing_parents_are_rejected(self):
         """Keep the editable topology acyclic with valid references."""

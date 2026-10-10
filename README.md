@@ -34,7 +34,7 @@ python3 -m network.server --port 8766 --db /path/to/network.db
 1. Add your router, switches, and access points. Enter each private IPv4 address or local hostname, type, and location.
 2. Add your computers, phones, tablets, TVs, streaming devices, IoT devices, and other clients.
 3. Use **Connects to** to select each device's upstream parent, then choose wired or wireless. The graph shows these configured connections and prevents loops. Discovery does not infer switch ports or actual physical topology.
-4. In **Settings**, set your actual LAN subnet, check interval, consecutive missed-check threshold, and heartbeat timeout.
+4. In **Settings**, set your actual LAN subnet, check interval, consecutive missed-check threshold, and heartbeat timeout. Appearance (System, Light, Dark) lives in Settings too and is stored per browser; System follows your OS setting automatically.
 5. Select **Discover devices**, review the subnet, and start the scan. Import selected responders, then edit their names, types, locations, and parents. Nothing is scanned automatically. Only private IPv4 subnets of /24 or smaller are supported, with at most 254 addresses.
 
 Search devices by name, address, manufacturer, MAC, or location. Filter by type, status, and location. Select a row or graph node for details, the last successful response, and recent check history. The network map supports drag-to-pan, wheel or button zoom, fit-to-view, keyboard node selection, and a presentation view (Escape exits).
