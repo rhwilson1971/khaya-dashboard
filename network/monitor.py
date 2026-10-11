@@ -3,23 +3,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import ipaddress
 import platform
 import re
-import socket
 import subprocess
 import threading
 import time
 import uuid
-from network.store import local_ipv4, validate_target, validate_subnet
-
-
-def resolve_target(target):
-    """Resolve a validated target to private IPv4; reject public DNS answers."""
-    target = validate_target(target)
-    if local_ipv4(target):
-        return target
-    addresses = {r[4][0] for r in socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_DGRAM)}
-    if not addresses or not all(local_ipv4(a) for a in addresses):
-        raise ValueError('Hostname must resolve exclusively to private IPv4 addresses.')
-    return sorted(addresses)[0]
+from network.store import validate_subnet
+from network.dns import resolve_target
 
 
 def probe(target):

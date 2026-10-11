@@ -82,6 +82,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/api/snapshot', headers={'Host': 'evil.example'})[0], 403)
         self.assertEqual(self.store.list_devices(), [])
 
+    def test_lan_accepts_local_dns_domain_and_checks_origin(self):
+        """Allow configured local hosts in LAN mode while enforcing the origin."""
+        self.server.server_address = ('0.0.0.0', 8765)
+        host = 'khaya.boma.home.arpa:8765'
+        self.assertEqual(self.request('GET', '/api/snapshot', headers={'Host': host})[0], 200)
+        self.assertEqual(self.request('PATCH', '/api/settings', {'interval': 20}, {'Host': host, 'Origin': 'http://' + host})[0], 200)
+        self.assertEqual(self.request('PATCH', '/api/settings', {'interval': 30}, {'Host': host, 'Origin': 'http://evil.example'})[0], 403)
+        for bad in ['evilboma.home.arpa:8765', 'khaya.boma.home.arpa.evil:8765', 'khaya.boma.home.arpa:8766']:
+            self.assertEqual(self.request('GET', '/api/snapshot', headers={'Host': bad})[0], 403)
+
+    def test_loopback_mode_still_rejects_lan_dns_hosts(self):
+        """Keep a loopback-bound server restricted to loopback Host headers."""
+        self.assertEqual(self.request('GET', '/api/snapshot', headers={'Host': 'khaya.boma.home.arpa:8765'})[0], 403)
+
     def test_heartbeat_requires_correct_bearer_token(self):
         """Do not accept unauthenticated heartbeat health claims."""
         _, d = self.request('POST', '/api/devices', {'name': 'PC', 'target': '192.168.1.10', 'method': 'heartbeat'})

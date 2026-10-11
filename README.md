@@ -21,13 +21,23 @@ The first empty inventory opens a clearly labeled sample network. Select **Use m
 python3 -m network.server --host 0.0.0.0
 ```
 
-Open `http://YOUR_COLLECTOR_LAN_IPV4:8765` from another device, replacing the placeholder with the computer's address, such as `192.168.1.20`. Allow port 8765 through the host firewall only for your trusted home network. LAN mode provides inventory editing to devices that can reach the service; there is no user login. Keep it on a trusted LAN and do not forward this port to the internet. Use the literal LAN IPv4 address: custom DNS hostnames and reverse proxies are not supported by the host/origin protection.
+Open `http://YOUR_COLLECTOR_HOSTNAME.boma.home.arpa:8765` from another device, using the collector's existing Pi-hole DNS record, or use its literal LAN IPv4 address. Allow port 8765 through the host firewall only for your trusted home network. LAN mode provides inventory editing to devices that can reach the service; there is no user login. Keep it on a trusted LAN and do not forward this port to the internet. The host/origin protection accepts private IPv4 addresses and valid hostnames in `boma.home.arpa`; requests must use the same origin and the configured port. Reverse proxies are outside this setup.
 
 Choose another port or database if needed:
 
 ```sh
 python3 -m network.server --port 8766 --db /path/to/network.db
 ```
+
+### Local DNS
+
+The home domain is **`boma.home.arpa`**. Device hostname checks and hostname-based computer heartbeats query **Pi-hole at `10.0.10.53` (`jina.boma.home.arpa`)**, directly on DNS port 53. These fixed values are displayed in Settings and defined in `network/config.py`.
+
+Enter a short device target such as `jina` or its full name `jina.boma.home.arpa`. Short names are expanded to the home domain. Existing literal private IPv4 targets continue working and bypass DNS; inventory names, addresses, connections, and history are preserved. Display names are not automatically converted into DNS records. To monitor another device by DNS, edit its target to a name that already exists in Pi-hole.
+
+For dashboard access by hostname, configure each client to obtain DNS server `10.0.10.53` through your LAN DHCP settings or its own network settings. Use the collector's existing `boma.home.arpa` record, or add a record in Pi-hole pointing to the collector's LAN IPv4. For example, if you create `khaya.boma.home.arpa` for the collector, open `http://khaya.boma.home.arpa:8765` after starting the server with `--host 0.0.0.0`. The application does not change DHCP, Pi-hole records, or operating-system DNS settings.
+
+The collector and heartbeat agent must be able to reach `10.0.10.53` on UDP and TCP port 53. Application lookups use Pi-hole even if the host's default resolver differs. DNS resolution has a shared three-second deadline, supports CNAME answers and TCP fallback, and rejects public IPv4 answers. Missing records, malformed responses, and DNS failures appear as **Unknown** monitoring results with an error; no system or public DNS fallback is used. Browser hostname resolution uses the browser client's DNS configuration.
 
 ## Configure your home
 
@@ -56,23 +66,23 @@ Targets must be IPv4 in RFC1918 private ranges or loopback. Local hostnames must
 1. Add or edit a computer and select **Computer heartbeat** under Health check.
 2. Open the device details and select **Set up heartbeat**. Save the generated secret; the database retains only its SHA-256 verifier. Generating a replacement immediately invalidates the old secret.
 3. Copy `heartbeat_agent.py` and the `network` folder to the monitored computer (or use this checkout there). Python 3.10+ is the only requirement.
-4. On that computer, set the secret in an environment variable and run the agent against the displayed heartbeat endpoint. For a different computer, replace `127.0.0.1` with the collector's actual LAN IPv4 address and enable LAN mode on the collector.
+4. On that computer, set the secret in an environment variable and run the agent against the displayed heartbeat endpoint. For a different computer, replace `127.0.0.1` with the collector's actual `boma.home.arpa` hostname or LAN IPv4 address and enable LAN mode on the collector.
 
 macOS / Linux:
 
 ```sh
 export KHAYA_HEARTBEAT_TOKEN='YOUR_GENERATED_SECRET'
-python3 heartbeat_agent.py --url http://192.168.1.20:8765/api/heartbeat/YOUR_DEVICE_ID
+python3 heartbeat_agent.py --url http://YOUR_COLLECTOR_HOSTNAME.boma.home.arpa:8765/api/heartbeat/YOUR_DEVICE_ID
 ```
 
 Windows PowerShell:
 
 ```powershell
 $env:KHAYA_HEARTBEAT_TOKEN = 'YOUR_GENERATED_SECRET'
-python heartbeat_agent.py --url http://192.168.1.20:8765/api/heartbeat/YOUR_DEVICE_ID
+python heartbeat_agent.py --url http://YOUR_COLLECTOR_HOSTNAME.boma.home.arpa:8765/api/heartbeat/YOUR_DEVICE_ID
 ```
 
-The default heartbeat interval is 30 seconds. Set the dashboard's heartbeat timeout comfortably above that interval (default 180 seconds). Use `--interval 20` to change the agent interval or `--once` for a single connectivity check. Run the agent as a startup task on computers you want to monitor continuously. The agent refuses public destinations and redirects, bypasses environment proxies for the local endpoint, and never prints the secret in its logs. Transport is local HTTP, so use only on your trusted LAN.
+The default heartbeat interval is 30 seconds. Set the dashboard's heartbeat timeout comfortably above that interval (default 180 seconds). Use `--interval 20` to change the agent interval or `--once` for a single connectivity check. Run the agent as a startup task on computers you want to monitor continuously. Each hostname-based send resolves through Pi-hole and connects to the validated private IP while retaining the original HTTP Host header. The agent refuses public destinations and redirects, bypasses environment proxies for the local endpoint, and never prints the secret in its logs. Transport is local HTTP, so use only on your trusted LAN.
 
 A heartbeat certifies that the agent could run and contact the collector. It does not inspect the computer's applications or resource usage.
 
@@ -83,7 +93,7 @@ A heartbeat certifies that the agent could run and contact the collector. It doe
 - Browser storage: selected live/sample mode only.
 - No external fonts, analytics, cloud services, or JavaScript packages.
 - API responses exclude heartbeat verifiers; heartbeat credentials are accepted only through `Authorization: Bearer …`.
-- Browser requests are guarded by literal local host validation, same-origin checks, JSON request bodies, and no CORS access. These guards are not a substitute for LAN access control.
+- Browser requests are guarded by private-IP or configured home-domain host validation, same-origin checks, JSON request bodies, and no CORS access. Loopback mode remains restricted to `localhost` and `127.0.0.1`. These guards are not a substitute for LAN access control.
 
 Back up the database while the service is stopped. Removing a device permanently removes its observations and detaches child devices; the UI asks for confirmation.
 
@@ -95,7 +105,7 @@ node --test tests/frontend.test.cjs
 node --check static/app.js
 ```
 
-Python tests exercise SQLite persistence and validation, topology cycles, probe result interpretation, thresholds, heartbeat authentication and expiry, collector behavior, discovery/import, and the actual HTTP request parser on an in-memory transport. The memory transport works in environments that prohibit listening sockets. Frontend tests exercise rendered state, escaping, search/filter logic, and graph topology using Node's built-in test runner; Node is needed only for those development checks.
+Python tests exercise Pi-hole DNS packets and transport, SQLite persistence and validation, topology cycles, probe result interpretation, thresholds, heartbeat destination pinning, authentication and expiry, collector behavior, discovery/import, and the actual HTTP request parser on an in-memory transport. The memory transport works in environments that prohibit listening sockets. Frontend tests exercise rendered state, DNS configuration display, escaping, search/filter logic, and graph topology using Node's built-in test runner; Node is needed only for those development checks.
 
 During development in this session, the sandbox blocked binding a local server and sending even a localhost ICMP packet. Browser policy also blocked opening a local-file preview. Automated tests and syntax checks can run here, but live server, real network discovery, browser interactions, and responsive visual QA require running the application outside this sandbox. No real home devices were discovered or configured during development.
 

@@ -138,6 +138,19 @@ class StoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.store.save_settings(changes)
 
+    def test_dns_settings_are_visible_read_only_and_preserve_inventory(self):
+        """Expose fixed Pi-hole configuration without changing stored device targets."""
+        d = self.device()
+        settings = self.store.settings()
+        self.assertEqual(settings['dns_domain'], 'boma.home.arpa')
+        self.assertEqual(settings['dns_server'], '10.0.10.53')
+        self.assertEqual(settings['dns_hostname'], 'jina.boma.home.arpa')
+        self.store.save_settings({'interval': 20})
+        self.assertEqual(self.store.settings()['dns_server'], '10.0.10.53')
+        with self.assertRaises(ValueError):
+            self.store.save_settings({'dns_server': '8.8.8.8'})
+        self.assertEqual(self.store.get_device(d['id'])['target'], d['target'])
+
     def test_sample_devices_never_enter_real_inventory(self):
         """Return illustrative fixtures separately from real monitored records."""
         self.assertGreater(len(self.store.snapshot(sample=True)['devices']), 10)

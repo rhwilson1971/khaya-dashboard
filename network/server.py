@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from network.monitor import Collector
 from network.store import Store, local_ipv4
+from network.dns import local_hostname
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = logging.getLogger('khaya')
@@ -44,7 +45,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def trusted_request(self):
-        """Enforce literal local hosts and same-origin requests to resist rebinding and CSRF."""
+        """Allow local IPs or the configured LAN DNS domain with same-origin requests."""
         host = self.headers.get('Host', '')
         try:
             parsed = urlsplit('http://' + host)
@@ -52,10 +53,10 @@ class Handler(BaseHTTPRequestHandler):
             port = parsed.port or 80
         except ValueError:
             return False
-        allowed = hostname == 'localhost' or local_ipv4(hostname or '')
+        allowed = hostname == 'localhost' or local_ipv4(hostname or '') or local_hostname(hostname)
         if self.server.server_address[0] in ('127.0.0.1', 'localhost'):
             allowed = hostname in ('localhost', '127.0.0.1')
-        if not allowed or port != self.server.server_port or parsed.username or parsed.path:
+        if not allowed or port != self.server.server_port or parsed.username or parsed.path or parsed.query or parsed.fragment:
             return False
         origin = self.headers.get('Origin')
         if origin and origin != 'http://' + host:
