@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock
 from network.server import Handler
 from network.store import Store
 from network.monitor import Collector
@@ -40,6 +41,7 @@ class ServerTests(unittest.TestCase):
         self.store = Store(Path(self.tmp.name) / 'db')
         self.collector = Collector(self.store, probe_fn=lambda target: {'reachable': True, 'latency': 1, 'error': ''})
         self.server = SimpleNamespace(store=self.store, collector=self.collector, server_port=8765, server_address=('127.0.0.1', 8765))
+        self.server.device_dns = SimpleNamespace(describe=Mock(return_value={'dns_name': None, 'dns_status': 'not_found'}))
 
     def tearDown(self):
         """Remove persisted test data."""
@@ -74,6 +76,30 @@ class ServerTests(unittest.TestCase):
         self.assertIn('html', body)
         self.assertTrue(self.request('GET', '/api/snapshot?sample=1')[1]['sample'])
         self.assertEqual(self.request('GET', '/api/snapshot')[1]['devices'], [])
+        self.server.device_dns.describe.assert_not_called()
+
+    def test_details_include_dns_properties_without_modifying_inventory(self):
+        """Enrich the detail response while keeping snapshots and persisted data unchanged."""
+        d = self.store.save_device({'name': 'DNS server', 'target': '10.0.10.53'})
+        self.server.device_dns.describe.return_value = {'dns_name': 'jina.boma.home.arpa', 'dns_status': 'resolved'}
+        status, result = self.request('GET', '/api/devices/' + d['id'])
+        self.assertEqual(status, 200)
+        self.assertEqual(result['device']['dns_name'], 'jina.boma.home.arpa')
+        self.server.device_dns.describe.assert_called_once_with('10.0.10.53')
+        self.assertNotIn('dns_name', self.store.get_device(d['id']))
+        self.assertNotIn('dns_name', self.request('GET', '/api/snapshot')[1]['devices'][0])
+        self.assertEqual(self.store.get_device(d['id'])['target'], '10.0.10.53')
+
+    def test_failed_dns_property_does_not_fail_device_details(self):
+        """Show a DNS failure independently of the device's recorded health and history."""
+        d = self.store.save_device({'name': 'PC', 'target': '10.0.10.20'})
+        self.store.record_probe(d['id'], True, 1)
+        self.server.device_dns.describe.return_value = {'dns_name': None, 'dns_status': 'unavailable'}
+        status, result = self.request('GET', '/api/devices/' + d['id'])
+        self.assertEqual(status, 200)
+        self.assertEqual(result['device']['dns_status'], 'unavailable')
+        self.assertEqual(result['device']['status'], 'online')
+        self.assertEqual(len(result['history']), 1)
 
     def test_host_and_origin_protection(self):
         """Reject foreign origins and rebinding hostnames before inventory mutations."""

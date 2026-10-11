@@ -12,17 +12,80 @@ def wire_name(name):
 
 
 def answer(query, records, flags=0x8180, question=None):
-    """Build a DNS reply with supplied answer records and optional question override."""
-    question = query[12:] if question is None else wire_name(question) + struct.pack('!HH', 1, 1)
+    """Build a DNS reply with answer records, optional TTLs, and question override."""
+    question = query[12:] if question is None else wire_name(question) + query[-4:]
     body = b''
-    for owner, kind, value in records:
+    for record in records:
+        owner, kind, value = record[:3]
+        ttl = record[3] if len(record) > 3 else 60
         data = socket.inet_aton(value) if kind == 1 else wire_name(value)
-        body += wire_name(owner) + struct.pack('!HHIH', kind, 1, 60, len(data)) + data
+        body += wire_name(owner) + struct.pack('!HHIH', kind, 1, ttl, len(data)) + data
     return query[:2] + struct.pack('!HHHHH', flags, 1, len(records), 0, 0) + question + body
 
 
 class DNSTests(unittest.TestCase):
     """Verify Pi-hole transport, answer validation, and address safety."""
+
+    def test_reverse_lookup_queries_pihole_for_full_local_name(self):
+        """Use a PTR question for an IPv4 address and preserve the DNS TTL."""
+        with patch('network.dns.socket.socket') as factory:
+            sock = factory.return_value.__enter__.return_value
+            sock.recv.side_effect = lambda size: answer(sock.send.call_args.args[0], [('53.10.0.10.in-addr.arpa', 12, 'JINA.BOMA.HOME.ARPA', 120)])
+            self.assertEqual(dns.reverse_lookup('10.0.10.53'), (['jina.boma.home.arpa'], 120))
+            sock.connect.assert_called_with(('10.0.10.53', 53))
+            self.assertIn(wire_name('53.10.0.10.in-addr.arpa'), sock.send.call_args.args[0])
+            self.assertEqual(sock.send.call_args.args[0][-4:], struct.pack('!HH', 12, 1))
+
+    def test_reverse_alias_uses_smallest_related_ttl(self):
+        """Follow related CNAME records and ignore names outside the configured domain."""
+        records = [('53.10.0.10.in-addr.arpa', 5, 'alias.in-addr.arpa', 20), ('alias.in-addr.arpa', 12, 'jina.boma.home.arpa', 120), ('alias.in-addr.arpa', 12, 'outside.example', 1), ('other.in-addr.arpa', 12, 'wrong.boma.home.arpa', 1)]
+        with patch('network.dns._exchange', side_effect=lambda q, deadline: answer(q, records)):
+            self.assertEqual(dns.reverse_lookup('10.0.10.53'), (['jina.boma.home.arpa'], 20))
+
+    def test_reverse_short_name_expands_domain(self):
+        """Expand a Pi-hole short PTR hostname to the full home-domain name."""
+        with patch('network.dns._exchange', side_effect=lambda q, deadline: answer(q, [('53.10.0.10.in-addr.arpa', 12, 'jina')])):
+            self.assertEqual(dns.reverse_lookup('10.0.10.53'), (['jina.boma.home.arpa'], 60))
+
+    def test_reverse_missing_and_nonlocal_records_are_not_names(self):
+        """Distinguish absent usable PTR records from a broken DNS lookup."""
+        for records, flags in [([], 0x8180), ([], 0x8183), ([('53.10.0.10.in-addr.arpa', 12, 'outside.example')], 0x8180), ([('53.10.0.10.in-addr.arpa', 12, 'localhost')], 0x8180)]:
+            with self.subTest(records=records, flags=flags), patch('network.dns._exchange', side_effect=lambda q, deadline: answer(q, records, flags=flags)):
+                self.assertEqual(dns.reverse_lookup('10.0.10.53'), ([], 30))
+
+    def test_reverse_rejects_public_address_and_exposes_errors(self):
+        """Do not query public IPs or hide malformed replies and transport failures."""
+        with patch('network.dns._exchange') as exchange:
+            with self.assertRaises(ValueError):
+                dns.reverse_lookup('8.8.8.8')
+            exchange.assert_not_called()
+        for failure in [OSError('timeout'), ValueError('malformed reply')]:
+            with self.subTest(failure=failure), patch('network.dns._exchange', side_effect=failure):
+                with self.assertRaises(type(failure)):
+                    dns.reverse_lookup('10.0.10.53')
+
+    def test_reverse_alias_followup_retains_ttl_and_shared_deadline(self):
+        """Complete an alias in a second PTR query without resetting its deadline or TTL."""
+        replies = [[('53.10.0.10.in-addr.arpa', 5, 'alias.in-addr.arpa', 10)], [('alias.in-addr.arpa', 12, 'jina.boma.home.arpa', 60)]]
+        with patch('network.dns._exchange', side_effect=lambda q, deadline: answer(q, replies.pop(0))) as exchange:
+            self.assertEqual(dns.reverse_lookup('10.0.10.53'), (['jina.boma.home.arpa'], 10))
+            self.assertIn(wire_name('alias.in-addr.arpa'), exchange.call_args.args[0])
+            self.assertEqual(exchange.call_args_list[0].args[1], exchange.call_args_list[1].args[1])
+
+    def test_reverse_rejects_bad_questions_malformed_names_and_alias_loops(self):
+        """Actual invalid wire replies must not become missing-name results."""
+        replies = [
+            lambda q: answer(q, [], flags=0x8183, question='other.in-addr.arpa'),
+            lambda q: answer(q, [], flags=0x8182),
+            lambda q: answer(q[:-4] + struct.pack('!HH', 1, 1), []),
+            lambda q: answer(q, [('53.10.0.10.in-addr.arpa', 12, 'bad_name.boma.home.arpa')]),
+            lambda q: answer(q, [('53.10.0.10.in-addr.arpa', 5, '53.10.0.10.in-addr.arpa')]),
+            lambda q: answer(q, [('53.10.0.10.in-addr.arpa', 12, 'jina.boma.home.arpa')])[:-1],
+        ]
+        for reply in replies:
+            with self.subTest(reply=reply), patch('network.dns._exchange', side_effect=lambda q, deadline: reply(q)):
+                with self.assertRaises(ValueError):
+                    dns.reverse_lookup('10.0.10.53')
 
     def test_short_name_queries_pihole_and_fqdn_is_preserved(self):
         """Expand short names and always connect directly to the configured DNS IP."""

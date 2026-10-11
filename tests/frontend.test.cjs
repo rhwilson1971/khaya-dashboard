@@ -103,6 +103,57 @@ test('all pages render the supplied state without undefined values',()=>{
   }
 });
 
+test('overview displays the configured DNS domain and escapes it',()=>{
+  const app=dashboard();
+  app.state.snapshot.settings.dns_domain='boma.home.arpa';
+  assert.match(app.renderOverview(),/DNS domain/);
+  assert.match(app.renderOverview(),/boma\.home\.arpa/);
+  app.state.snapshot.settings.dns_domain='<script>alert(1)</script>';
+  assert.ok(!app.renderOverview().includes('<script>'));
+  assert.match(app.renderOverview(),/&lt;script&gt;/);
+});
+
+test('live device properties show the entire returned DNS name',async()=>{
+  const device={id:'jina',name:'DNS server',target:'10.0.10.53',type:'computer',status:'online',dns_name:'jina.boma.home.arpa',dns_status:'resolved'};
+  const app=dashboard(async()=>response({device,history:[]}));
+  app.state.sample=false;
+  await app.openDetail('jina');
+  const html=app.document.querySelector('#detail-content').innerHTML;
+  assert.match(html,/<dt>DNS name<\/dt>/);
+  assert.match(html,/jina\.boma\.home\.arpa/);
+  assert.match(html,/10\.0\.10\.53/);
+});
+
+test('device DNS properties distinguish missing names from lookup failures',async()=>{
+  for(const [status,label] of [['not_found','No DNS name found'],['unavailable','DNS lookup unavailable']]) {
+    const device={id:'pc',name:'PC',target:'10.0.10.20',type:'computer',status:'unknown',dns_name:null,dns_status:status};
+    const app=dashboard(async()=>response({device,history:[]}));
+    app.state.sample=false;
+    await app.openDetail('pc');
+    assert.ok(app.document.querySelector('#detail-content').innerHTML.includes(label));
+  }
+});
+
+test('sample device DNS properties cause no API lookup or invented names',async()=>{
+  const app=dashboard(()=>assert.fail('Sample devices must not query live DNS'));
+  const device=app.state.snapshot.devices[0];
+  await app.openDetail(device.id);
+  assert.match(app.document.querySelector('#detail-content').innerHTML,/Not available in sample network/);
+  device.dns_name='sample.boma.home.arpa';
+  await app.openDetail(device.id);
+  assert.match(app.document.querySelector('#detail-content').innerHTML,/sample\.boma\.home\.arpa/);
+});
+
+test('device properties escape DNS names from the API',async()=>{
+  const device={id:'pc',name:'PC',target:'10.0.10.20',type:'computer',status:'unknown',dns_name:'<img src=x onerror=alert(1)>',dns_status:'resolved'};
+  const app=dashboard(async()=>response({device,history:[]}));
+  app.state.sample=false;
+  await app.openDetail('pc');
+  const html=app.document.querySelector('#detail-content').innerHTML;
+  assert.ok(!html.includes('<img'));
+  assert.match(html,/&lt;img/);
+});
+
 
 test('settings opened offline reload real values when the service reconnects', async()=>{
   const real={sample:true,devices:[],events:[],counts:{online:0,offline:0,unknown:0},settings:{subnet:'192.168.10.0/24',interval:50,failure_threshold:5,heartbeat_timeout:300},collector:{running:true}};

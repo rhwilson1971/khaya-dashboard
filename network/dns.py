@@ -1,4 +1,5 @@
 """Bounded IPv4 DNS lookups through the home Pi-hole, with no resolver fallback."""
+import ipaddress
 import secrets
 import socket
 import struct
@@ -7,6 +8,10 @@ from network.config import DNS_DOMAIN, DNS_SERVER
 from network.store import local_ipv4, validate_target
 
 LOOKUP_TIMEOUT = 3
+
+
+class DNSNotFound(ValueError):
+    """Signal a matching-query NXDOMAIN reply rather than a transport error."""
 
 
 def local_hostname(value):
@@ -99,25 +104,31 @@ def _exchange(query, deadline):
     return reply
 
 
-def _parse_response(packet, query, name):
-    """Validate the DNS question and return A/CNAME records from the answer section."""
+def _parse_response(packet, query, name, qtype=1):
+    """Validate the question and return (owner, type, value, TTL) answer records.
+
+    qtype selects A (1) or PTR (12); CNAMEs are retained for either query.
+    NXDOMAIN raises DNSNotFound, while malformed or other error replies
+    raise ValueError. Only IN-class records are used.
+    """
     if len(packet) < 12 or packet[:2] != query[:2]:
         raise ValueError('Invalid DNS response transaction.')
     _, flags, questions, answers, _, _ = struct.unpack_from('!6H', packet)
     if not flags & 0x8000 or flags & 0x7a00 or questions != 1:
         raise ValueError('Invalid or truncated DNS response.')
-    if flags & 0x000f:
-        raise ValueError(f'Pi-hole DNS lookup failed for {name} (code {flags & 0x000f}).')
     question, offset = _read_name(packet, 12)
-    if question != name or packet[offset:offset + 4] != struct.pack('!HH', 1, 1):
+    if question != name or packet[offset:offset + 4] != struct.pack('!HH', qtype, 1):
         raise ValueError('DNS response question does not match the target.')
+    if flags & 0x000f:
+        error = DNSNotFound if flags & 0x000f == 3 else ValueError
+        raise error(f'Pi-hole DNS lookup failed for {name} (code {flags & 0x000f}).')
     offset += 4
     records = []
     for _ in range(answers):
         owner, offset = _read_name(packet, offset)
         if offset + 10 > len(packet):
             raise ValueError('Truncated DNS answer.')
-        kind, cls, _, size = struct.unpack_from('!HHIH', packet, offset)
+        kind, cls, ttl, size = struct.unpack_from('!HHIH', packet, offset)
         offset += 10
         end = offset + size
         if end > len(packet):
@@ -125,14 +136,71 @@ def _parse_response(packet, query, name):
         if cls == 1 and kind == 1:
             if size != 4:
                 raise ValueError('Invalid DNS IPv4 answer.')
-            records.append((owner, kind, socket.inet_ntoa(packet[offset:end])))
-        elif cls == 1 and kind == 5:
+            records.append((owner, kind, socket.inet_ntoa(packet[offset:end]), ttl))
+        elif cls == 1 and kind in (5, 12):
             canonical, consumed = _read_name(packet, offset)
             if consumed != end:
-                raise ValueError('Invalid DNS CNAME answer.')
-            records.append((owner, kind, validate_target(canonical)))
+                raise ValueError('Invalid DNS hostname answer.')
+            records.append((owner, kind, validate_target(canonical), ttl))
         offset = end
     return records
+
+
+def _query_records(name, qtype, deadline):
+    """Send one A or PTR query through Pi-hole and return validated records with TTLs."""
+    encoded = b''.join(bytes([len(label)]) + label.encode('ascii') for label in name.split('.')) + b'\0'
+    query = struct.pack('!6H', secrets.randbits(16), 0x0100, 1, 0, 0, 0) + encoded + struct.pack('!HH', qtype, 1)
+    return _parse_response(_exchange(query, deadline), query, name, qtype)
+
+
+def reverse_lookup(address):
+    """Return (local DNS names, TTL seconds) for a private IPv4 using Pi-hole PTR.
+
+    Short returned hostnames are expanded to the home domain. Nonlocal names
+    and NXDOMAIN yield an empty list with a 30-second negative-cache lifetime.
+    CNAME TTLs constrain the returned lifetime. Transport and malformed-answer
+    errors propagate, and all follow-ups share one three-second deadline.
+    """
+    if not local_ipv4(address):
+        raise ValueError('Reverse DNS requires a private IPv4 address.')
+    name = ipaddress.IPv4Address(address).reverse_pointer
+    deadline = time.monotonic() + LOOKUP_TIMEOUT
+    visited, ttls = set(), []
+    try:
+        for _ in range(8):
+            if name in visited:
+                raise ValueError('DNS CNAME loop.')
+            visited.add(name)
+            records = _query_records(name, 12, deadline)
+            chain = set()
+            while name not in chain:
+                chain.add(name)
+                names = set()
+                answer_ttls = []
+                ptrs = [(value, ttl) for owner, kind, value, ttl in records if owner == name and kind == 12]
+                aliases = [(value, ttl) for owner, kind, value, ttl in records if owner == name and kind == 5]
+                if ptrs:
+                    if aliases:
+                        raise ValueError('Conflicting DNS PTR and CNAME records.')
+                    for value, ttl in ptrs:
+                        full_name = qualify_name(value)
+                        if value != 'localhost' and local_hostname(full_name):
+                            names.add(full_name)
+                            answer_ttls.append(ttl)
+                    return (sorted(names), min(ttls + answer_ttls)) if names else ([], 30)
+                if not aliases:
+                    if len(chain) == 1:
+                        return [], 30
+                    break
+                if len({value for value, _ in aliases}) != 1:
+                    raise ValueError('Conflicting DNS CNAME records.')
+                ttls.extend(ttl for _, ttl in aliases)
+                name = aliases[0][0]
+            else:
+                raise ValueError('DNS CNAME loop.')
+        raise ValueError('Too many DNS CNAME redirects.')
+    except DNSNotFound:
+        return [], 30
 
 
 def resolve_target(target):
@@ -156,14 +224,12 @@ def resolve_target(target):
             if name in visited:
                 raise ValueError('DNS CNAME loop.')
             visited.add(name)
-            encoded = b''.join(bytes([len(label)]) + label.encode('ascii') for label in name.split('.')) + b'\0'
-            query = struct.pack('!6H', secrets.randbits(16), 0x0100, 1, 0, 0, 0) + encoded + struct.pack('!HH', 1, 1)
-            records = _parse_response(_exchange(query, deadline), query, name)
+            records = _query_records(name, 1, deadline)
             chain = set()
             while name not in chain:
                 chain.add(name)
-                addresses = {value for owner, kind, value in records if owner == name and kind == 1}
-                aliases = {value for owner, kind, value in records if owner == name and kind == 5}
+                addresses = {value for owner, kind, value, _ in records if owner == name and kind == 1}
+                aliases = {value for owner, kind, value, _ in records if owner == name and kind == 5}
                 if addresses:
                     if aliases or not all(local_ipv4(a) for a in addresses):
                         raise ValueError('Hostname must resolve exclusively to private IPv4 addresses.')
