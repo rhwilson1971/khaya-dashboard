@@ -133,6 +133,16 @@ test('settings offers a system-synced appearance option',()=>{
   assert.match(markup, /value="dark"/);
 });
 
+test('settings displays the configured local domain and Pi-hole resolver',()=>{
+  const app=dashboard();
+  app.state.snapshot.settings={...app.state.snapshot.settings,dns_domain:'boma.home.arpa',dns_server:'10.0.10.53',dns_hostname:'jina.boma.home.arpa'};
+  const markup=app.renderSettings();
+  assert.match(markup,/boma\.home\.arpa/);
+  assert.match(markup,/jina\.boma\.home\.arpa/);
+  assert.match(markup,/10\.0\.10\.53/);
+  assert.ok(!markup.includes('name="dns_server"'));
+});
+
 test('stored dark preference overrides the OS setting',()=>{
   const app=dashboard(undefined,{storage:{'khaya-theme':'dark'},darkMode:true});
   assert.equal(app.currentTheme(),'dark');

@@ -15,9 +15,18 @@ class MonitorTests(unittest.TestCase):
 
     def test_rejects_public_dns_resolution(self):
         """A hostname resolving outside private networks must never be probed."""
-        with patch('network.monitor.socket.getaddrinfo', return_value=[(2, 2, 17, '', ('8.8.8.8', 0))]):
+        with patch('network.monitor.resolve_target', side_effect=ValueError('Hostname must resolve exclusively to private IPv4 addresses.')):
+            self.assertIsNone(probe('example.com')['reachable'])
+        with patch('network.dns._exchange', side_effect=ValueError('DNS returned a public address')):
             with self.assertRaises(ValueError):
                 resolve_target('example.com')
+
+    def test_probe_uses_resolved_pihole_address(self):
+        """Pass only the validated DNS result to ping."""
+        with patch('network.monitor.resolve_target', return_value='10.0.10.20') as resolve, patch('network.monitor.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'time=1 ms', '')) as run:
+            self.assertTrue(probe('tembo')['reachable'])
+            resolve.assert_called_once_with('tembo')
+            self.assertEqual(run.call_args.args[0][-1], '10.0.10.20')
 
     def test_probe_parses_latency(self):
         """Parse real ping output and pass only an argv vector to subprocess."""

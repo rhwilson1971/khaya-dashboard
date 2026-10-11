@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import time
 import uuid
+from network.config import DNS_SETTINGS
 
 TYPES = ('router', 'switch', 'access_point', 'computer', 'phone', 'tablet', 'tv', 'streaming', 'iot', 'other')
 METHODS = ('icmp', 'heartbeat', 'none')
@@ -131,22 +132,22 @@ class Store:
             db.close()
 
     def settings(self):
-        """Return the persisted collector settings as a JSON-compatible mapping."""
+        """Return persisted collector settings plus fixed, read-only home DNS configuration."""
         with self.connection() as db:
-            return {r['key']: json.loads(r['value']) for r in db.execute('SELECT * FROM settings')}
+            return {**{r['key']: json.loads(r['value']) for r in db.execute('SELECT * FROM settings')}, **DNS_SETTINGS}
 
     def save_settings(self, changes):
         """Validate and persist supplied interval, threshold, timeout, and subnet values."""
         if not isinstance(changes, dict) or set(changes) - set(DEFAULTS):
             raise ValueError('Unrecognized monitoring setting.')
-        updated = {**self.settings(), **changes}
+        updated = {**{k: v for k, v in self.settings().items() if k in DEFAULTS}, **changes}
         for key, low, high in [('interval', 10, 3600), ('failure_threshold', 1, 10), ('heartbeat_timeout', 30, 86400)]:
             if type(updated[key]) is not int or not low <= updated[key] <= high:
                 raise ValueError(f'{key.replace("_", " ")} must be between {low} and {high}.')
         updated['subnet'] = validate_subnet(updated['subnet'])
         with self.connection() as db:
             db.executemany('INSERT OR REPLACE INTO settings VALUES (?, ?)', [(k, json.dumps(v)) for k, v in updated.items()])
-        return updated
+        return {**updated, **DNS_SETTINGS}
 
     @staticmethod
     def public(row):
