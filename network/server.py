@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from network.monitor import Collector
 from network.store import Store, local_ipv4
 from network.dns import local_hostname
+from network.device_dns import DeviceDNS
 
 ROOT = Path(__file__).resolve().parent.parent
 LOG = logging.getLogger('khaya')
@@ -18,9 +19,10 @@ class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, store, collector):
-        """Bind the given address and expose shared application services to handlers."""
+        """Bind the address and expose storage, collector, and a server-local DNS cache."""
         self.store = store
         self.collector = collector
+        self.device_dns = DeviceDNS()
         super().__init__(address, Handler)
 
 
@@ -102,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(500, {'error': 'The local service encountered an error. Check its console log.'})
 
     def route(self, method):
-        """Serve recognized assets, inventory, settings, checks, discovery, and heartbeat routes."""
+        """Serve supported routes; enrich device-detail reads with cached DNS properties."""
         url = urlsplit(self.path)
         parts = url.path.strip('/').split('/')
         query = parse_qs(url.query)
@@ -124,7 +126,9 @@ class Handler(BaseHTTPRequestHandler):
             device_id = parts[2]
             if len(parts) == 3:
                 if method == 'GET':
-                    self.reply(200, {'device': store.get_device(device_id), 'history': store.history(device_id)})
+                    device = store.get_device(device_id)
+                    device.update(self.server.device_dns.describe(device['target']))
+                    self.reply(200, {'device': device, 'history': store.history(device_id)})
                     return
                 if method == 'PATCH':
                     self.reply(200, store.save_device(self.body(), device_id))

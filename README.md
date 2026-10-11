@@ -39,6 +39,10 @@ For dashboard access by hostname, configure each client to obtain DNS server `10
 
 The collector and heartbeat agent must be able to reach `10.0.10.53` on UDP and TCP port 53. Application lookups use Pi-hole even if the host's default resolver differs. DNS resolution has a shared three-second deadline, supports CNAME answers and TCP fallback, and rejects public IPv4 answers. Missing records, malformed responses, and DNS failures appear as **Unknown** monitoring results with an error; no system or public DNS fallback is used. Browser hostname resolution uses the browser client's DNS configuration.
 
+The overview shows **DNS domain: `boma.home.arpa`**. Open a device's properties to see its complete **DNS name**, such as `jina.boma.home.arpa`, beside its IP address or monitoring target. Hostname targets display their configured full name (short names are expanded); this does not certify that a DNS record currently exists. Devices monitored by IP use a reverse DNS (PTR) lookup through Pi-hole. Short names returned by Pi-hole are expanded to the home domain; names outside the home domain are not displayed as local names.
+
+If Pi-hole has no usable reverse record, properties show **No DNS name found**. DNS transport errors or malformed replies show **DNS lookup unavailable**. Device display names are not used to invent DNS records. DNS properties do not change inventory targets, recorded health, or history, and lookups happen only when opening real device details. Successful results are cached for their DNS TTL, up to an hour; absent names are cached for 30 seconds and lookup errors for five seconds. Sample devices never trigger DNS queries.
+
 ## Configure your home
 
 1. Add your router, switches, and access points. Enter each private IPv4 address or local hostname, type, and location.
