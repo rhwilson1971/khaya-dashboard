@@ -3,8 +3,10 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
+import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from db import default_url
 from network.monitor import Collector
 from network.store import Store, local_ipv4
 from network.dns import local_hostname
@@ -224,14 +226,21 @@ def main():
     parser = argparse.ArgumentParser(description='Khaya inventory and health dashboard')
     parser.add_argument('--host', default='127.0.0.1', help='Bind address; use 0.0.0.0 for trusted LAN access')
     parser.add_argument('--port', type=int, default=8765)
-    parser.add_argument('--db', default=str(ROOT / 'data' / 'network.db'))
+    parser.add_argument('--db', default=None,
+                        help='database URL: SQLite path, sqlite:///path.db, or postgresql://user:pass@host/db '
+                             '(default: $KHAYA_DATABASE_URL, then data/network.db)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-    store = Store(args.db)
+    url = args.db or os.environ.get('KHAYA_DATABASE_URL') or default_url()
+    try:
+        store = Store(url)
+    except RuntimeError as exc:
+        parser.error(str(exc))
     collector = Collector(store)
     server = create_server(store, collector, args.host, args.port)
     collector.start()
-    print(f'Khaya is running at http://{"127.0.0.1" if args.host == "0.0.0.0" else args.host}:{server.server_port}', flush=True)
+    print(f'Khaya is running at http://{"127.0.0.1" if args.host == "0.0.0.0" else args.host}:{server.server_port} '
+          f'using {store.backend.redacted_url()}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

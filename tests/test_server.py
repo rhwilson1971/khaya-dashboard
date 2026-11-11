@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock
+from db.migrations import initialize
 from network.server import Handler
 from network.store import Store
 from network.monitor import Collector
@@ -38,7 +39,9 @@ class ServerTests(unittest.TestCase):
     def setUp(self):
         """Create temporary services for in-memory HTTP wire requests."""
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = Store(Path(self.tmp.name) / 'db')
+        self.url = f'sqlite://{Path(self.tmp.name) / "db"}'
+        initialize(self.url)
+        self.store = Store(self.url)
         self.collector = Collector(self.store, probe_fn=lambda target: {'reachable': True, 'latency': 1, 'error': ''})
         self.server = SimpleNamespace(store=self.store, collector=self.collector, server_port=8765, server_address=('127.0.0.1', 8765))
         self.server.device_dns = SimpleNamespace(describe=Mock(return_value={'dns_name': None, 'dns_status': 'not_found'}))

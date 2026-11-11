@@ -1,0 +1,17 @@
+# Stable in-cluster address for the dashboard. LAN access normally uses the
+# deployment's hostPort instead; see k8s/README.md for MetalLB alternatives.
+apiVersion: v1
+kind: Service
+metadata:
+  name: khaya
+  namespace: khaya
+  labels:
+    app.kubernetes.io/name: khaya
+    app.kubernetes.io/part-of: khaya
+spec:
+  selector:
+    app.kubernetes.io/name: khaya
+  ports:
+    - name: http
+      port: 8765
+      targetPort: http

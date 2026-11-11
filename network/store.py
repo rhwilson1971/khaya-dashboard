@@ -1,20 +1,24 @@
-"""SQLite inventory, topology, and health observations for a local network."""
+"""Inventory, topology, and health observations on a decoupled database.
+
+Storage lives behind a db-package backend (SQLite or PostgreSQL), and the
+application never creates or migrates schema; run `python -m db init` first.
+"""
 from contextlib import contextmanager
 import hashlib
 import hmac
 import ipaddress
 import json
-from pathlib import Path
 import re
 import secrets
-import sqlite3
 import time
 import uuid
+from db import Backend, open_backend
+from db.schema import REQUIRED_TABLES, SETTINGS_DEFAULTS
 from network.config import DNS_SETTINGS
 
 TYPES = ('router', 'switch', 'access_point', 'computer', 'phone', 'tablet', 'tv', 'streaming', 'iot', 'other')
 METHODS = ('icmp', 'heartbeat', 'none')
-DEFAULTS = {'interval': 30, 'failure_threshold': 3, 'heartbeat_timeout': 180, 'subnet': '192.168.1.0/24'}
+DEFAULTS = SETTINGS_DEFAULTS
 PRIVATE = tuple(ipaddress.ip_network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8'))
 
 
@@ -54,87 +58,32 @@ def validate_subnet(value):
 
 
 class Store:
-    """Persist inventory and checks using short, independent SQLite transactions."""
+    """Persist inventory and checks using short, independent transactions."""
 
-    def __init__(self, path):
-        """Create the database and schema at path; initialize monitoring settings."""
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._drop_target_uniqueness()
-        with self.connection() as db:
-            db.executescript('''
-                CREATE TABLE IF NOT EXISTS devices (
-                    id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL,
-                    type TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
-                    manufacturer TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
-                    notes TEXT NOT NULL DEFAULT '', connection TEXT NOT NULL DEFAULT 'wired',
-                    parent_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
-                    method TEXT NOT NULL DEFAULT 'icmp', status TEXT NOT NULL DEFAULT 'unknown',
-                    last_check REAL, last_seen REAL, latency REAL, failures INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT NOT NULL DEFAULT '', heartbeat_hash TEXT,
-                    created_at REAL NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS observations (
-                    id INTEGER PRIMARY KEY, device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
-                    at REAL NOT NULL, reachable INTEGER, latency REAL, error TEXT NOT NULL DEFAULT ''
-                );
-                CREATE INDEX IF NOT EXISTS observation_device ON observations(device_id, at);
-                CREATE TABLE IF NOT EXISTS events (
-                    id INTEGER PRIMARY KEY, at REAL NOT NULL, device_id TEXT, name TEXT NOT NULL,
-                    status TEXT NOT NULL, message TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            ''')
-            for key, value in DEFAULTS.items():
-                db.execute('INSERT OR IGNORE INTO settings VALUES (?, ?)', (key, json.dumps(value)))
+    def __init__(self, source):
+        """Attach to an initialized database given a Backend, URL, or SQLite path.
 
-    def _drop_target_uniqueness(self):
-        """Rebuild a legacy devices table that still enforces unique addresses."""
-        db = sqlite3.connect(self.path, timeout=15)
-        try:
-            row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='devices'").fetchone()
-            if not row or 'UNIQUE' not in (row[0] or ''):
-                return
-            columns = ('id, name, target, type, location, manufacturer, mac, notes, connection,'
-                       ' parent_id, method, status, last_check, last_seen, latency,'
-                       ' failures, last_error, heartbeat_hash, created_at')
-            db.execute('PRAGMA foreign_keys=OFF')
-            db.executescript(f'''
-                CREATE TABLE devices_new (
-                    id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL,
-                    type TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
-                    manufacturer TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
-                    notes TEXT NOT NULL DEFAULT '', connection TEXT NOT NULL DEFAULT 'wired',
-                    parent_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
-                    method TEXT NOT NULL DEFAULT 'icmp', status TEXT NOT NULL DEFAULT 'unknown',
-                    last_check REAL, last_seen REAL, latency REAL, failures INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT NOT NULL DEFAULT '', heartbeat_hash TEXT,
-                    created_at REAL NOT NULL
-                );
-                INSERT INTO devices_new ({columns}) SELECT {columns} FROM devices;
-                DROP TABLE devices;
-                ALTER TABLE devices_new RENAME TO devices;
-            ''')
-            db.commit()
-        finally:
-            db.close()
+        The application deliberately does not create or migrate schema;
+        `python -m db init` owns provisioning so it can run independently
+        (locally, in a container, or as a Kubernetes Job).
+        """
+        self.backend = source if isinstance(source, Backend) else open_backend(source)
+        missing = [table for table in REQUIRED_TABLES if table not in self.backend.tables()]
+        if missing:
+            raise RuntimeError(f'The database at {self.backend.redacted_url()} is not initialized '
+                               f'(missing {", ".join(missing)}). Run `python -m db init` first, then start Khaya.')
 
     @contextmanager
     def connection(self):
-        """Yield a foreign-key-enabled connection; commit or roll back and always close."""
-        db = sqlite3.connect(self.path, timeout=15)
-        db.row_factory = sqlite3.Row
-        db.execute('PRAGMA foreign_keys=ON')
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        """Yield the backend's transaction scope; commit or roll back and close."""
+        with self.backend.connection() as db:
+            yield db
 
     def settings(self):
         """Return persisted collector settings plus fixed, read-only home DNS configuration."""
         with self.connection() as db:
-            return {**{r['key']: json.loads(r['value']) for r in db.execute('SELECT * FROM settings')}, **DNS_SETTINGS}
+            saved = {r['key']: json.loads(r['value']) for r in db.execute('SELECT * FROM settings')}
+        return {**DEFAULTS, **saved, **DNS_SETTINGS}
 
     def save_settings(self, changes):
         """Validate and persist supplied interval, threshold, timeout, and subnet values."""
@@ -146,7 +95,8 @@ class Store:
                 raise ValueError(f'{key.replace("_", " ")} must be between {low} and {high}.')
         updated['subnet'] = validate_subnet(updated['subnet'])
         with self.connection() as db:
-            db.executemany('INSERT OR REPLACE INTO settings VALUES (?, ?)', [(k, json.dumps(v)) for k, v in updated.items()])
+            db.executemany('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                           [(k, json.dumps(v)) for k, v in updated.items()])
         return {**updated, **DNS_SETTINGS}
 
     @staticmethod
@@ -233,11 +183,13 @@ class Store:
             row = db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone()
             if not row or (expected_target is not None and (row['target'] != expected_target or row['method'] != 'icmp')):
                 return
-            threshold = json.loads(db.execute("SELECT value FROM settings WHERE key='failure_threshold'").fetchone()[0])
+            setting = db.execute("SELECT value FROM settings WHERE key='failure_threshold'").fetchone()
+            threshold = json.loads(setting['value']) if setting else DEFAULTS['failure_threshold']
             failures = 0 if reachable is True else (row['failures'] + 1 if reachable is False else row['failures'])
             status = 'online' if reachable is True else ('offline' if reachable is False and failures >= threshold else ('unknown' if reachable is None else row['status']))
             db.execute('UPDATE devices SET status=?, last_check=?, last_seen=?, latency=?, failures=?, last_error=? WHERE id=?', (status, at, at if reachable is True else row['last_seen'], latency, failures, error, device_id))
-            db.execute('INSERT INTO observations(device_id,at,reachable,latency,error) VALUES(?,?,?,?,?)', (device_id, at, reachable, latency, error))
+            db.execute('INSERT INTO observations(device_id,at,reachable,latency,error) VALUES(?,?,?,?,?)',
+                       (device_id, at, None if reachable is None else int(reachable), latency, error))
             db.execute('DELETE FROM observations WHERE device_id=? AND id NOT IN (SELECT id FROM observations WHERE device_id=? ORDER BY id DESC LIMIT 500)', (device_id, device_id))
             if status != row['status']:
                 db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (at, device_id, row['name'], status, {'online': 'Responding again', 'offline': 'No response after consecutive checks', 'unknown': error or 'Status unknown'}[status]))

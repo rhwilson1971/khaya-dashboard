@@ -1,0 +1,73 @@
+# Dashboard and collector. The database is not part of this Deployment: the
+# app connects to khaya-db over the network through KHAYA_DATABASE_URL.
+#
+# hostPort 8765 makes the dashboard reachable on every node's LAN address
+# (http://<node-ip>:8765) without a LoadBalancer, while preserving the app's
+# private-address and same-origin request checks.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: khaya
+  namespace: khaya
+  labels:
+    app.kubernetes.io/name: khaya
+    app.kubernetes.io/part-of: khaya
+spec:
+  # Keep at one replica: a second collector would double ICMP probing and
+  # duplicate events (writes stay serialized, but observations would repeat).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: khaya
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: khaya
+        app.kubernetes.io/part-of: khaya
+    spec:
+      securityContext:
+        runAsNonRoot: true   # the image runs as its unprivileged appuser
+      containers:
+        - name: khaya
+          image: khaya:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: khaya-db-credentials
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: khaya-db-credentials
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: khaya-db-credentials
+                  key: POSTGRES_DB
+            - name: KHAYA_DATABASE_URL
+              value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@khaya-db:5432/$(POSTGRES_DB)
+          ports:
+            - name: http
+              containerPort: 8765
+              hostPort: 8765
+          readinessProbe:
+            httpGet:
+              path: /api/snapshot
+              port: 8765
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/snapshot
+              port: 8765
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 256Mi

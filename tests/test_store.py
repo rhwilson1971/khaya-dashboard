@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from db.migrations import initialize, migrate
 from network.store import Store
 
 
@@ -9,10 +10,11 @@ class StoreTests(unittest.TestCase):
     """Verify inventory invariants and deterministic monitoring state transitions."""
 
     def setUp(self):
-        """Create a private database for each test."""
+        """Create and initialize a private database for each test."""
         self.tmp = tempfile.TemporaryDirectory()
-        self.path = Path(self.tmp.name) / 'network.db'
-        self.store = Store(self.path)
+        self.url = f'sqlite://{Path(self.tmp.name) / "network.db"}'
+        initialize(self.url)
+        self.store = Store(self.url)
 
     def tearDown(self):
         """Remove the isolated database."""
@@ -26,7 +28,7 @@ class StoreTests(unittest.TestCase):
         """Persist a device and its edited fields across Store instances."""
         d = self.device()
         self.store.save_device({'name': 'Studio', 'location': 'Office'}, d['id'])
-        restored = Store(self.path).get_device(d['id'])
+        restored = Store(self.url).get_device(d['id'])
         self.assertEqual(restored['name'], 'Studio')
         self.assertEqual(restored['location'], 'Office')
         self.assertEqual(restored['status'], 'unknown')
@@ -51,7 +53,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(self.store.list_devices()), 2)
 
     def test_existing_database_migrates_away_from_unique_addresses(self):
-        """Open a database created while addresses were unique, then allow sharing."""
+        """Migrate a database created while addresses were unique, then allow sharing."""
         legacy = Path(self.tmp.name) / 'legacy.db'
         db = __import__('sqlite3').connect(legacy)
         try:
@@ -69,7 +71,10 @@ class StoreTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
-        store = Store(legacy)
+        url = f'sqlite://{legacy}'
+        report = dict(migrate(url))
+        self.assertEqual(report['0002_drop_unique_target'], 'rebuilt devices without unique target')
+        store = Store(url)
         self.assertEqual(store.get_device('a')['target'], '192.168.1.20')
         store.save_device({'name': 'Replacement', 'target': '192.168.1.20', 'type': 'computer'})
         self.assertEqual(len(store.list_devices()), 2)
