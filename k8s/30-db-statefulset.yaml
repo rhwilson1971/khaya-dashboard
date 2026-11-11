@@ -1,0 +1,71 @@
+# Single-instance PostgreSQL with a persistent volume. The app's database is
+# a separate service: the dashboard connects over the network and never owns
+# schema creation (the init Job does that).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: khaya-db
+  namespace: khaya
+  labels:
+    app.kubernetes.io/name: khaya-db
+    app.kubernetes.io/part-of: khaya
+spec:
+  serviceName: khaya-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: khaya-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: khaya-db
+        app.kubernetes.io/part-of: khaya
+    spec:
+      # 70 is the `postgres` user in the official Alpine image.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef:
+                name: khaya-db-credentials
+          env:
+            # Keep data in a subdirectory of the mounted volume; the volume
+            # root belongs to Kubernetes (lost+found) and is not writable.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

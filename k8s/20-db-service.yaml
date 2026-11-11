@@ -1,0 +1,18 @@
+# Headless service backing the StatefulSet; `khaya-db` resolves to the
+# database pod inside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: khaya-db
+  namespace: khaya
+  labels:
+    app.kubernetes.io/name: khaya-db
+    app.kubernetes.io/part-of: khaya
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: khaya-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

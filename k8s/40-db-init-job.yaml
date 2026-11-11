@@ -1,0 +1,45 @@
+# One-shot schema provisioning, decoupled from the app: this Job creates the
+# tables and seeds defaults with `python -m db init`. It waits up to two
+# minutes for the database to accept connections, so it can start before the
+# PostgreSQL pod is ready. Re-running it is safe (everything is idempotent).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: khaya-db-init
+  namespace: khaya
+  labels:
+    app.kubernetes.io/name: khaya-db-init
+    app.kubernetes.io/part-of: khaya
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: khaya-db-init
+        app.kubernetes.io/part-of: khaya
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: init
+          image: khaya:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "db", "init", "--retry-seconds", "120"]
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: khaya-db-credentials
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: khaya-db-credentials
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: khaya-db-credentials
+                  key: POSTGRES_DB
+            # $(VAR) references expand from the env entries above.
+            - name: KHAYA_DATABASE_URL
+              value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@khaya-db:5432/$(POSTGRES_DB)

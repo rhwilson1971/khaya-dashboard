@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from db.migrations import initialize
 from network.store import Store
 from network.monitor import probe, resolve_target, Collector
 
@@ -50,7 +51,9 @@ class MonitorTests(unittest.TestCase):
     def test_collector_skips_unmonitored_and_heartbeat_devices(self):
         """Probe only ICMP devices and record actual results."""
         with tempfile.TemporaryDirectory() as directory:
-            store = Store(Path(directory) / 'db')
+            url = f'sqlite://{Path(directory) / "db"}'
+            initialize(url)
+            store = Store(url)
             a = store.save_device({'name': 'PC', 'target': '192.168.1.10', 'type': 'computer'})
             store.save_device({'name': 'Tablet', 'target': '192.168.1.11', 'method': 'none'})
             store.save_device({'name': 'Agent', 'target': '192.168.1.12', 'method': 'heartbeat'})
@@ -63,7 +66,9 @@ class MonitorTests(unittest.TestCase):
     def test_discovery_is_bounded_and_returns_only_responders(self):
         """Scan a configured /30 and keep candidates outside real inventory."""
         with tempfile.TemporaryDirectory() as directory:
-            store = Store(Path(directory) / 'db')
+            url = f'sqlite://{Path(directory) / "db"}'
+            initialize(url)
+            store = Store(url)
             store.save_settings({'subnet': '192.168.1.0/30'})
             collector = Collector(store, probe_fn=lambda target: {'reachable': target.endswith('.1'), 'latency': 1, 'error': ''})
             job = collector.start_discovery()
@@ -80,7 +85,9 @@ class MonitorTests(unittest.TestCase):
     def test_heartbeat_expires_while_icmp_batch_is_blocked(self):
         """A slow ICMP batch must not delay the independent heartbeat timer."""
         with tempfile.TemporaryDirectory() as directory:
-            store = Store(Path(directory) / 'db')
+            url = f'sqlite://{Path(directory) / "db"}'
+            initialize(url)
+            store = Store(url)
             store.save_settings({'heartbeat_timeout': 30})
             computer = store.save_device({'name': 'Agent', 'target': '192.168.1.11', 'method': 'heartbeat'})
             store.save_device({'name': 'Ping', 'target': '192.168.1.12'})

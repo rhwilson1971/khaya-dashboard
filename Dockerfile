@@ -1,5 +1,6 @@
 # Khaya collector + dashboard.
 # Stdlib-only Python app (Python 3.10+); the only OS dependency is the `ping` binary.
+# requirements.txt adds the optional psycopg driver for cluster-hosted PostgreSQL.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,8 +16,14 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Runtime sources only: API/collector package, static dashboard, heartbeat agent script.
+# Database driver for the PostgreSQL backend; SQLite-only deployments need nothing.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
+
+# Runtime sources: API/collector package, standalone database tooling, static
+# dashboard, and the heartbeat agent script.
 COPY network/ ./network/
+COPY db/ ./db/
 COPY static/ ./static/
 COPY heartbeat_agent.py ./
 
@@ -34,5 +41,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/snapshot', timeout=5)"
 
 # Bind 0.0.0.0 inside the container so the dashboard is reachable via published ports.
-# Override with: docker run ... khaya --host 127.0.0.1 --port 8766 --db /app/data/custom.db
+# Override with: docker run ... khaya --host 127.0.0.1 --port 8766 --db postgresql://...
 CMD ["python3", "-m", "network.server", "--host", "0.0.0.0", "--port", "8765"]
