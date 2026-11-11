@@ -1,5 +1,8 @@
 # Database options for Khaya on a Kubernetes home cluster
 
+> **Status:** Khaya now supports PostgreSQL only. The SQLite options below are
+> retained as historical comparison, not as supported deployment choices.
+
 Khaya's storage needs are modest and specific: a handful of small relational
 tables (inventory, topology, capped observations, events, settings),
 transactional writes with foreign keys, and a write rate of a few dozen rows
@@ -53,13 +56,12 @@ plain PostgreSQL over `KHAYA_DATABASE_URL` regardless.
 
 ## Why PostgreSQL for this project
 
-- **SQL compatibility.** The schema and queries port with one dialect file
-  (`db/schema.py`): `ON CONFLICT` upserts, `REAL`/`DOUBLE PRECISION`,
-  identity columns replace SQLite's implicit rowids, and
-  `pg_advisory_xact_lock` reproduces `BEGIN IMMEDIATE`'s serialized writes
-  so topology cycle checks stay airtight.
-- **A single pip dependency.** `psycopg[binary]` is the only addition to a
-  previously stdlib-only app, and SQLite deployments still need nothing.
+- **SQL compatibility.** The schema lives in `db/schema.py` and uses
+  PostgreSQL `ON CONFLICT` upserts, `DOUBLE PRECISION`, and identity columns.
+  `pg_advisory_xact_lock` serializes writers so topology cycle checks stay
+  airtight.
+- **A single pip dependency.** `psycopg[binary]` is the only runtime
+  dependency.
 - **Home-cluster sized.** Runs well within 256 MiB with the default
   configuration; the official Alpine image is ~80 MiB.
 - **Escapability.** If requirements grow (HA, point-in-time recovery), the
@@ -71,7 +73,7 @@ plain PostgreSQL over `KHAYA_DATABASE_URL` regardless.
   the advisory lock with `GET_LOCK` semantics, change placeholder handling
   and identity columns. One new backend module plus dialect SQL — the
   `db/` package structure already anticipates this.
-- **SQLite-on-PVC:** keep the current backend, drop PostgreSQL entirely; the
+- **SQLite-on-PVC:** restore the SQLite backend and drop PostgreSQL; the
   app stays bound to one pod and its volume. The standalone scripts
   (`init`, `backup`, `restore`) remain useful as Jobs against the PVC.
 - **rqlite:** write an HTTP-based backend speaking its JSON API (possible

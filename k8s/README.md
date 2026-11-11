@@ -93,13 +93,11 @@ kubectl -n khaya delete pod db-backup
 kubectl -n khaya run db-restore --rm -it --restart=Never --image=khaya:latest \
   --env=KHAYA_DATABASE_URL=postgresql://khaya:PASSWORD@khaya-db:5432/khaya \
   -- python3 -m db restore --input - --yes < ./khaya-backup.json
-
-# Import an existing SQLite database from the collector machine
-kubectl -n khaya run db-import --rm -it --restart=Never --image=khaya:latest \
-  --env=KHAYA_DATABASE_URL=postgresql://khaya:PASSWORD@khaya-db:5432/khaya \
-  -- python3 -m db import-sqlite --sqlite /data/network.db --yes
-# (mount the file, or `kubectl cp` it into a PVC-backed pod first)
 ```
+
+SQLite is not supported by this image. To move an old `data/network.db`
+inventory, use an older Khaya release to run `python3 -m db backup`, then
+restore that JSON dump with this image.
 
 To change the database password later: update the secret, then restart the
 StatefulSet and deployment (`kubectl -n khaya rollout restart statefulset/khaya-db deployment/khaya`)

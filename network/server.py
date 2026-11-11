@@ -3,10 +3,9 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
-import os
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from db import default_url
+from db import resolve_url
 from network.monitor import Collector
 from network.store import Store, local_ipv4
 from network.dns import local_hostname
@@ -227,14 +226,14 @@ def main():
     parser.add_argument('--host', default='127.0.0.1', help='Bind address; use 0.0.0.0 for trusted LAN access')
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--db', default=None,
-                        help='database URL: SQLite path, sqlite:///path.db, or postgresql://user:pass@host/db '
-                             '(default: $KHAYA_DATABASE_URL, then data/network.db)')
+                        help='PostgreSQL URL, such as postgresql://user:pass@host:5432/khaya '
+                             '(default: $KHAYA_DATABASE_URL)')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-    url = args.db or os.environ.get('KHAYA_DATABASE_URL') or default_url()
     try:
+        url = resolve_url(args.db)
         store = Store(url)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         parser.error(str(exc))
     collector = Collector(store)
     server = create_server(store, collector, args.host, args.port)

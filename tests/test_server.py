@@ -2,14 +2,12 @@
 import io
 from types import SimpleNamespace
 import json
-from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import Mock
-from db.migrations import initialize
 from network.server import Handler
 from network.store import Store
 from network.monitor import Collector
+from tests.support import POSTGRES_URL, requires_postgres, reset_database
 
 
 class MemoryConnection:
@@ -33,22 +31,18 @@ class MemoryConnection:
         self.timeout = seconds
 
 
+@requires_postgres
 class ServerTests(unittest.TestCase):
     """Exercise public routes over an isolated local HTTP server."""
 
     def setUp(self):
-        """Create temporary services for in-memory HTTP wire requests."""
-        self.tmp = tempfile.TemporaryDirectory()
-        self.url = f'sqlite://{Path(self.tmp.name) / "db"}'
-        initialize(self.url)
+        """Create services for in-memory HTTP wire requests."""
+        self.url = POSTGRES_URL
+        reset_database(self.url)
         self.store = Store(self.url)
         self.collector = Collector(self.store, probe_fn=lambda target: {'reachable': True, 'latency': 1, 'error': ''})
         self.server = SimpleNamespace(store=self.store, collector=self.collector, server_port=8765, server_address=('127.0.0.1', 8765))
         self.server.device_dns = SimpleNamespace(describe=Mock(return_value={'dns_name': None, 'dns_status': 'not_found'}))
-
-    def tearDown(self):
-        """Remove persisted test data."""
-        self.tmp.cleanup()
 
     def request(self, method, path, data=None, headers=None):
         """Send one request and return status plus decoded JSON or text."""

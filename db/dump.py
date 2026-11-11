@@ -1,13 +1,10 @@
-"""Portable logical dumps: JSON backups, restores, and SQLite imports.
+"""Portable logical dumps: JSON backups and restores.
 
-The dump format is backend-neutral JSON, so a backup taken from SQLite can be
-restored into PostgreSQL and vice versa. Devices are inserted in two phases
+The dump format is backend-neutral JSON. Devices are inserted in two phases
 (parent links applied after every row exists) so self-referencing topology
 restores without ordering tricks.
 """
-import json
 import time
-from pathlib import Path
 from db import Backend, open_backend
 from db.schema import DATA_TABLES, REQUIRED_TABLES
 
@@ -59,7 +56,7 @@ def _insert_rows(db, table, rows, skip_column=None):
     inserted = 0
     for row in rows:
         columns = [column for column in row if column != skip_column]
-        placeholders = ','.join('?' for _ in columns)
+        placeholders = ','.join('%s' for _ in columns)
         db.execute(f'INSERT INTO {table} ({",".join(columns)}) VALUES ({placeholders})',
                    [row[column] for column in columns])
         inserted += 1
@@ -76,31 +73,17 @@ def restore(target, data):
     counts = {}
     with backend.connection() as db:
         # One serialized transaction: readers see the old or the new data.
-        db.execute('BEGIN IMMEDIATE')
+        db.begin_write()
         for table in WIPE_ORDER:
             db.execute(f'DELETE FROM {table}')
         devices = tables['devices']
         counts['devices'] = _insert_rows(db, 'devices', devices, skip_column='parent_id')
         for row in devices:
             if row.get('parent_id') is not None:
-                db.execute('UPDATE devices SET parent_id=? WHERE id=?', (row['parent_id'], row['id']))
+                db.execute('UPDATE devices SET parent_id=%s WHERE id=%s', (row['parent_id'], row['id']))
         for table in ('observations', 'events', 'settings'):
             counts[table] = _insert_rows(db, table, tables[table])
-        if backend.scheme == 'postgres':
-            from db.backend_postgres import resync_identity
-            for table in IDENTITY_TABLES:
-                resync_identity(db, table)
+        from db.backend_postgres import resync_identity
+        for table in IDENTITY_TABLES:
+            resync_identity(db, table)
     return counts
-
-
-def import_from_sqlite(path, target):
-    """Copy an existing SQLite database file into the target backend.
-
-    Accepts databases created by older application versions (they lack the
-    schema_migrations table) as long as the data tables are present.
-    """
-    source = open_backend(path if isinstance(path, (str, Path)) else str(path))
-    if source.scheme != 'sqlite':
-        raise ValueError('import-sqlite expects a SQLite file path; use backup/restore between other backends.')
-    data = _read_tables(source, DATA_TABLES)
-    return restore(target, data)

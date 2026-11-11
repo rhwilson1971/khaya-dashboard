@@ -1,42 +1,26 @@
 """Command-line entry points for database provisioning and maintenance.
 
 Run `python -m db <command>` without the dashboard; every command accepts
-`--url` or the KHAYA_DATABASE_URL environment variable, defaulting to the
-bundled SQLite path for local use.
+`--url` or the KHAYA_DATABASE_URL environment variable.
 """
 import argparse
 import json
-import os
 from pathlib import Path
 import sys
 import time
-from db import default_url, open_backend
+from db import DATABASE_URL_ENV, open_backend, resolve_url
 from db import dump as dump_module
 from db import migrations
 from db.schema import DATA_TABLES, REQUIRED_TABLES
 
-ENV_VAR = 'KHAYA_DATABASE_URL'
-
-
-def resolve_url(url):
-    """Prefer an explicit URL, then the environment, then the default path."""
-    if url:
-        return url
-    if os.environ.get(ENV_VAR):
-        return os.environ[ENV_VAR]
-    return default_url()
-
 
 def _connection_errors():
     """Return exception types that mean the database could not be reached."""
-    import sqlite3
-    errors = [sqlite3.OperationalError]
     try:
         import psycopg
-        errors.append(psycopg.OperationalError)
     except ImportError:
-        pass
-    return tuple(errors)
+        return ()
+    return (psycopg.OperationalError,)
 
 
 def run_with_retry(action, retry_seconds):
@@ -63,7 +47,7 @@ def _print_report(report):
 
 
 def _print_counts(counts):
-    """Show restored or imported row counts per table."""
+    """Show restored row counts per table."""
     print(', '.join(f'{table}: {count}' for table, count in counts.items()))
 
 
@@ -132,23 +116,11 @@ def command_restore(args):
     return 0
 
 
-def command_import_sqlite(args):
-    """Copy an existing SQLite database file into the target backend."""
-    if not args.yes:
-        print('import replaces every device, observation, event, and setting in the target database.', file=sys.stderr)
-        print('Re-run with --yes to confirm.', file=sys.stderr)
-        return 1
-    counts = dump_module.import_from_sqlite(args.sqlite, resolve_url(args.url))
-    _print_counts(counts)
-    print(f'imported {args.sqlite}')
-    return 0
-
-
 def main(argv=None):
     """Parse arguments and dispatch one database command."""
     parser = argparse.ArgumentParser(prog='python -m db', description='Khaya database provisioning and maintenance (runnable without the dashboard)')
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument('--url', help=f'database URL: SQLite path, sqlite:///path, or postgresql://user:pass@host/db (default: ${ENV_VAR}, then data/network.db)')
+    common.add_argument('--url', help=f'PostgreSQL URL (default: ${DATABASE_URL_ENV})')
     sub = parser.add_subparsers(dest='command', required=True, metavar='command')
 
     init = sub.add_parser('init', parents=[common], help='create the schema, apply migrations, and seed defaults')
@@ -171,11 +143,6 @@ def main(argv=None):
     restore.add_argument('--input', '-i', required=True, help='dump file to read')
     restore.add_argument('--yes', action='store_true', help='confirm replacing all target data')
     restore.set_defaults(handler=command_restore)
-
-    importer = sub.add_parser('import-sqlite', parents=[common], help='copy an existing SQLite database into the target backend')
-    importer.add_argument('--sqlite', required=True, help='path to the existing SQLite database file')
-    importer.add_argument('--yes', action='store_true', help='confirm replacing all target data')
-    importer.set_defaults(handler=command_import_sqlite)
 
     args = parser.parse_args(argv)
     try:

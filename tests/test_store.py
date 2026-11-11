@@ -1,24 +1,18 @@
-"""Inventory and monitoring behavior tests using an isolated persistent database."""
-import tempfile
+"""Inventory and monitoring behavior tests using an isolated PostgreSQL database."""
 import unittest
-from pathlib import Path
-from db.migrations import initialize, migrate
 from network.store import Store
+from tests.support import POSTGRES_URL, requires_postgres, reset_database
 
 
+@requires_postgres
 class StoreTests(unittest.TestCase):
     """Verify inventory invariants and deterministic monitoring state transitions."""
 
     def setUp(self):
-        """Create and initialize a private database for each test."""
-        self.tmp = tempfile.TemporaryDirectory()
-        self.url = f'sqlite://{Path(self.tmp.name) / "network.db"}'
-        initialize(self.url)
+        """Reset the shared test database for each test."""
+        self.url = POSTGRES_URL
+        reset_database(self.url)
         self.store = Store(self.url)
-
-    def tearDown(self):
-        """Remove the isolated database."""
-        self.tmp.cleanup()
 
     def device(self, **changes):
         """Create a real device with optional field overrides."""
@@ -51,33 +45,6 @@ class StoreTests(unittest.TestCase):
         back = self.store.save_device({'target': '192.168.1.20'}, first['id'])
         self.assertEqual(back['target'], '192.168.1.20')
         self.assertEqual(len(self.store.list_devices()), 2)
-
-    def test_existing_database_migrates_away_from_unique_addresses(self):
-        """Migrate a database created while addresses were unique, then allow sharing."""
-        legacy = Path(self.tmp.name) / 'legacy.db'
-        db = __import__('sqlite3').connect(legacy)
-        try:
-            db.execute('''CREATE TABLE devices (
-                id TEXT PRIMARY KEY, name TEXT NOT NULL, target TEXT NOT NULL UNIQUE,
-                type TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
-                manufacturer TEXT NOT NULL DEFAULT '', mac TEXT NOT NULL DEFAULT '',
-                notes TEXT NOT NULL DEFAULT '', connection TEXT NOT NULL DEFAULT 'wired',
-                parent_id TEXT REFERENCES devices(id) ON DELETE SET NULL,
-                method TEXT NOT NULL DEFAULT 'icmp', status TEXT NOT NULL DEFAULT 'unknown',
-                last_check REAL, last_seen REAL, latency REAL, failures INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT NOT NULL DEFAULT '', heartbeat_hash TEXT,
-                created_at REAL NOT NULL)''')
-            db.execute("INSERT INTO devices (id, name, target, type, created_at) VALUES ('a', 'Desktop', '192.168.1.20', 'computer', 1)")
-            db.commit()
-        finally:
-            db.close()
-        url = f'sqlite://{legacy}'
-        report = dict(migrate(url))
-        self.assertEqual(report['0002_drop_unique_target'], 'rebuilt devices without unique target')
-        store = Store(url)
-        self.assertEqual(store.get_device('a')['target'], '192.168.1.20')
-        store.save_device({'name': 'Replacement', 'target': '192.168.1.20', 'type': 'computer'})
-        self.assertEqual(len(store.list_devices()), 2)
 
     def test_parent_cycles_and_missing_parents_are_rejected(self):
         """Keep the editable topology acyclic with valid references."""

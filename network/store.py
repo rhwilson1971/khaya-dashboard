@@ -1,7 +1,7 @@
-"""Inventory, topology, and health observations on a decoupled database.
+"""Inventory, topology, and health observations on PostgreSQL.
 
-Storage lives behind a db-package backend (SQLite or PostgreSQL), and the
-application never creates or migrates schema; run `python -m db init` first.
+The application never creates or migrates schema; run `python -m db init`
+first.
 """
 from contextlib import contextmanager
 import hashlib
@@ -61,7 +61,7 @@ class Store:
     """Persist inventory and checks using short, independent transactions."""
 
     def __init__(self, source):
-        """Attach to an initialized database given a Backend, URL, or SQLite path.
+        """Attach to an initialized database given a Backend or PostgreSQL URL.
 
         The application deliberately does not create or migrate schema;
         `python -m db init` owns provisioning so it can run independently
@@ -95,7 +95,7 @@ class Store:
                 raise ValueError(f'{key.replace("_", " ")} must be between {low} and {high}.')
         updated['subnet'] = validate_subnet(updated['subnet'])
         with self.connection() as db:
-            db.executemany('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+            db.executemany('INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                            [(k, json.dumps(v)) for k, v in updated.items()])
         return {**updated, **DNS_SETTINGS}
 
@@ -116,7 +116,7 @@ class Store:
     def get_device(self, device_id):
         """Return one real device, raising KeyError for an unknown identifier."""
         with self.connection() as db:
-            return self.public(db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone())
+            return self.public(db.execute('SELECT * FROM devices WHERE id=%s', (device_id,)).fetchone())
 
     def save_device(self, data, device_id=None):
         """Create or patch a validated device; reject cyclic parent links.
@@ -129,8 +129,8 @@ class Store:
             raise ValueError('Unrecognized device field.')
         with self.connection() as db:
             # A write reservation keeps concurrent topology edits from bypassing cycle checks.
-            db.execute('BEGIN IMMEDIATE')
-            old = dict(db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone() or {}) if device_id else {}
+            db.begin_write()
+            old = dict(db.execute('SELECT * FROM devices WHERE id=%s', (device_id,)).fetchone() or {}) if device_id else {}
             if device_id and not old:
                 raise KeyError('Device not found.')
             d = {'name': '', 'target': '', 'type': 'other', 'location': '', 'manufacturer': '', 'mac': '', 'notes': '', 'connection': 'wired', 'parent_id': None, 'method': 'icmp', **old, **data}
@@ -154,78 +154,78 @@ class Store:
                 if parent in visited:
                     raise ValueError('This connection would create a loop in the network map.')
                 visited.add(parent)
-                row = db.execute('SELECT parent_id FROM devices WHERE id=?', (parent,)).fetchone()
+                row = db.execute('SELECT parent_id FROM devices WHERE id=%s', (parent,)).fetchone()
                 if not row:
                     raise ValueError('Parent device does not exist.')
                 parent = row['parent_id']
             d['parent_id'] = d['parent_id'] or None
             if old:
-                db.execute('UPDATE devices SET ' + ','.join(f'{k}=?' for k in fields) + ' WHERE id=?', (*[d[k] for k in fields], device_id))
+                db.execute('UPDATE devices SET ' + ','.join(f'{k}=%s' for k in fields) + ' WHERE id=%s', (*[d[k] for k in fields], device_id))
                 if old['target'] != d['target'] or old['method'] != d['method']:
-                    db.execute("UPDATE devices SET status='unknown', last_check=NULL, last_seen=NULL, latency=NULL, failures=0, last_error='', heartbeat_hash=NULL WHERE id=?", (device_id,))
-                    db.execute('DELETE FROM observations WHERE device_id=?', (device_id,))
+                    db.execute("UPDATE devices SET status='unknown', last_check=NULL, last_seen=NULL, latency=NULL, failures=0, last_error='', heartbeat_hash=NULL WHERE id=%s", (device_id,))
+                    db.execute('DELETE FROM observations WHERE device_id=%s', (device_id,))
             else:
-                db.execute('INSERT INTO devices (id,' + ','.join(fields) + ',created_at) VALUES (' + ','.join('?' for _ in range(len(fields) + 2)) + ')', (device_id, *[d[k] for k in fields], time.time()))
-                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (time.time(), device_id, d['name'], 'unknown', 'Added to your network'))
+                db.execute('INSERT INTO devices (id,' + ','.join(fields) + ',created_at) VALUES (' + ','.join('%s' for _ in range(len(fields) + 2)) + ')', (device_id, *[d[k] for k in fields], time.time()))
+                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(%s,%s,%s,%s,%s)', (time.time(), device_id, d['name'], 'unknown', 'Added to your network'))
         return self.get_device(device_id)
 
     def delete_device(self, device_id):
         """Delete a device and its observations; detach connected children."""
         with self.connection() as db:
-            if not db.execute('DELETE FROM devices WHERE id=?', (device_id,)).rowcount:
+            if not db.execute('DELETE FROM devices WHERE id=%s', (device_id,)).rowcount:
                 raise KeyError('Device not found.')
 
     def record_probe(self, device_id, reachable, latency, error='', at=None, expected_target=None):
         """Record a probe and transition health; ignore results for changed ICMP targets."""
         at = time.time() if at is None else at
         with self.connection() as db:
-            db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone()
+            db.begin_write()
+            row = db.execute('SELECT * FROM devices WHERE id=%s', (device_id,)).fetchone()
             if not row or (expected_target is not None and (row['target'] != expected_target or row['method'] != 'icmp')):
                 return
             setting = db.execute("SELECT value FROM settings WHERE key='failure_threshold'").fetchone()
             threshold = json.loads(setting['value']) if setting else DEFAULTS['failure_threshold']
             failures = 0 if reachable is True else (row['failures'] + 1 if reachable is False else row['failures'])
             status = 'online' if reachable is True else ('offline' if reachable is False and failures >= threshold else ('unknown' if reachable is None else row['status']))
-            db.execute('UPDATE devices SET status=?, last_check=?, last_seen=?, latency=?, failures=?, last_error=? WHERE id=?', (status, at, at if reachable is True else row['last_seen'], latency, failures, error, device_id))
-            db.execute('INSERT INTO observations(device_id,at,reachable,latency,error) VALUES(?,?,?,?,?)',
+            db.execute('UPDATE devices SET status=%s, last_check=%s, last_seen=%s, latency=%s, failures=%s, last_error=%s WHERE id=%s', (status, at, at if reachable is True else row['last_seen'], latency, failures, error, device_id))
+            db.execute('INSERT INTO observations(device_id,at,reachable,latency,error) VALUES(%s,%s,%s,%s,%s)',
                        (device_id, at, None if reachable is None else int(reachable), latency, error))
-            db.execute('DELETE FROM observations WHERE device_id=? AND id NOT IN (SELECT id FROM observations WHERE device_id=? ORDER BY id DESC LIMIT 500)', (device_id, device_id))
+            db.execute('DELETE FROM observations WHERE device_id=%s AND id NOT IN (SELECT id FROM observations WHERE device_id=%s ORDER BY id DESC LIMIT 500)', (device_id, device_id))
             if status != row['status']:
-                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (at, device_id, row['name'], status, {'online': 'Responding again', 'offline': 'No response after consecutive checks', 'unknown': error or 'Status unknown'}[status]))
+                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(%s,%s,%s,%s,%s)', (at, device_id, row['name'], status, {'online': 'Responding again', 'offline': 'No response after consecutive checks', 'unknown': error or 'Status unknown'}[status]))
             db.execute('DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 500)')
 
     def history(self, device_id):
         """Return up to 500 observations in ascending recorded order."""
         self.get_device(device_id)
         with self.connection() as db:
-            return [dict(r) for r in db.execute('SELECT at,reachable,latency,error FROM observations WHERE device_id=? ORDER BY id', (device_id,))]
+            return [dict(r) for r in db.execute('SELECT at,reachable,latency,error FROM observations WHERE device_id=%s ORDER BY id', (device_id,))]
 
     def rotate_heartbeat(self, device_id):
         """Replace a heartbeat secret and return its plaintext once for agent setup."""
         token = secrets.token_urlsafe(32)
         with self.connection() as db:
-            row = db.execute('SELECT method FROM devices WHERE id=?', (device_id,)).fetchone()
+            row = db.execute('SELECT method FROM devices WHERE id=%s', (device_id,)).fetchone()
             if not row:
                 raise KeyError('Device not found.')
             if row['method'] != 'heartbeat':
                 raise ValueError('Select heartbeat monitoring for this device first.')
-            db.execute('UPDATE devices SET heartbeat_hash=? WHERE id=?', (hashlib.sha256(token.encode()).hexdigest(), device_id))
+            db.execute('UPDATE devices SET heartbeat_hash=%s WHERE id=%s', (hashlib.sha256(token.encode()).hexdigest(), device_id))
         return token
 
     def heartbeat(self, device_id, token, at=None):
         """Authenticate a device heartbeat and atomically record a successful observation."""
         at = time.time() if at is None else at
         with self.connection() as db:
-            db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT * FROM devices WHERE id=?', (device_id,)).fetchone()
+            db.begin_write()
+            row = db.execute('SELECT * FROM devices WHERE id=%s', (device_id,)).fetchone()
             if not row or row['method'] != 'heartbeat' or not row['heartbeat_hash'] or not hmac.compare_digest(row['heartbeat_hash'], hashlib.sha256(token.encode()).hexdigest()):
                 return False
-            db.execute("UPDATE devices SET status='online',last_check=?,last_seen=?,latency=NULL,failures=0,last_error='' WHERE id=?", (at, at, device_id))
-            db.execute('INSERT INTO observations(device_id,at,reachable) VALUES(?,?,1)', (device_id, at))
-            db.execute('DELETE FROM observations WHERE device_id=? AND id NOT IN (SELECT id FROM observations WHERE device_id=? ORDER BY id DESC LIMIT 500)', (device_id, device_id))
+            db.execute("UPDATE devices SET status='online',last_check=%s,last_seen=%s,latency=NULL,failures=0,last_error='' WHERE id=%s", (at, at, device_id))
+            db.execute('INSERT INTO observations(device_id,at,reachable) VALUES(%s,%s,1)', (device_id, at))
+            db.execute('DELETE FROM observations WHERE device_id=%s AND id NOT IN (SELECT id FROM observations WHERE device_id=%s ORDER BY id DESC LIMIT 500)', (device_id, device_id))
             if row['status'] != 'online':
-                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (at, device_id, row['name'], 'online', 'Heartbeat received'))
+                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(%s,%s,%s,%s,%s)', (at, device_id, row['name'], 'online', 'Heartbeat received'))
         return True
 
     def expire_heartbeats(self, now=None):
@@ -233,11 +233,11 @@ class Store:
         now = time.time() if now is None else now
         timeout = self.settings()['heartbeat_timeout']
         with self.connection() as db:
-            db.execute('BEGIN IMMEDIATE')
-            for row in db.execute("SELECT * FROM devices WHERE method='heartbeat' AND status='online' AND last_seen<?", (now - timeout,)).fetchall():
-                db.execute("UPDATE devices SET status='offline',last_check=?,last_error='Heartbeat expired' WHERE id=?", (now, row['id']))
-                db.execute('INSERT INTO observations(device_id,at,reachable,error) VALUES(?,?,0,?)', (row['id'], now, 'Heartbeat expired'))
-                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(?,?,?,?,?)', (now, row['id'], row['name'], 'offline', 'Heartbeat expired'))
+            db.begin_write()
+            for row in db.execute("SELECT * FROM devices WHERE method='heartbeat' AND status='online' AND last_seen<%s", (now - timeout,)).fetchall():
+                db.execute("UPDATE devices SET status='offline',last_check=%s,last_error='Heartbeat expired' WHERE id=%s", (now, row['id']))
+                db.execute('INSERT INTO observations(device_id,at,reachable,error) VALUES(%s,%s,0,%s)', (row['id'], now, 'Heartbeat expired'))
+                db.execute('INSERT INTO events(at,device_id,name,status,message) VALUES(%s,%s,%s,%s,%s)', (now, row['id'], row['name'], 'offline', 'Heartbeat expired'))
 
     def snapshot(self, sample=False):
         """Return inventory, status totals, and recent events; optionally return isolated fixtures."""

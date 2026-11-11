@@ -1,6 +1,4 @@
 # Khaya runtime dependencies.
 #
-# SQLite-only deployments need nothing beyond the standard library; leave this
-# file empty or skip the install for those. The PostgreSQL backend (cluster-
-# hosted database) requires psycopg 3.
+# PostgreSQL is the only supported backend, so psycopg 3 is required.
 psycopg[binary]>=3.2,<4

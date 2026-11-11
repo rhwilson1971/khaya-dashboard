@@ -10,37 +10,21 @@ Skipped unless KHAYA_TEST_POSTGRES_URL is set, for example:
 The psycopg driver must also be installed. Tests wipe the data tables in
 setUp, so point the URL at a disposable database.
 """
-import os
 import threading
 import unittest
 from db import open_backend
 from db import dump as dump_module
-from db.migrations import initialize
 from network.store import Store
-
-POSTGRES_URL = os.environ.get('KHAYA_TEST_POSTGRES_URL')
-try:
-    import psycopg  # noqa: F401
-    PSYCOPG_AVAILABLE = True
-except ImportError:
-    PSYCOPG_AVAILABLE = False
+from tests.support import POSTGRES_URL, requires_postgres, reset_database
 
 
-@unittest.skipUnless(POSTGRES_URL and PSYCOPG_AVAILABLE, 'set KHAYA_TEST_POSTGRES_URL (and install psycopg) to run')
+@requires_postgres
 class PostgresStoreTests(unittest.TestCase):
-    """Exercise the same application behavior as the SQLite suite on PostgreSQL."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Provision the schema once for the whole run."""
-        initialize(POSTGRES_URL)
+    """Exercise application behavior against PostgreSQL."""
 
     def setUp(self):
         """Start every test from empty data tables and seeded settings."""
-        with open_backend(POSTGRES_URL).connection() as db:
-            for table in ('observations', 'events', 'devices', 'settings'):
-                db.execute(f'DELETE FROM {table}')
-        initialize(POSTGRES_URL)
+        reset_database(POSTGRES_URL)
 
     def device(self, **changes):
         """Create a real device with optional field overrides."""
@@ -126,6 +110,6 @@ class PostgresStoreTests(unittest.TestCase):
         self.assertFalse(state['is_called'])
         restored.record_probe(router['id'], True, 2.0, at=200)
         with open_backend(POSTGRES_URL).connection() as db:
-            ids = [row['id'] for row in db.execute('SELECT id FROM observations WHERE device_id=? ORDER BY id', (router['id'],))]
+            ids = [row['id'] for row in db.execute('SELECT id FROM observations WHERE device_id=%s ORDER BY id', (router['id'],))]
         self.assertEqual(len(ids), 2)
         self.assertEqual(ids, sorted(ids))

@@ -59,12 +59,7 @@ def redact_url(url):
 
 
 class Backend:
-    """Connection lifecycle and introspection shared by database backends.
-
-    Sessions yielded by ``connection()`` accept the portable SQL written by
-    this project: ``?`` placeholders, dict-style row access, and
-    ``BEGIN IMMEDIATE`` for serialized writes.
-    """
+    """Connection lifecycle and introspection for Khaya's PostgreSQL backend."""
 
     scheme = ''
 
@@ -86,10 +81,6 @@ class Backend:
         with self.connection() as db:
             for statement in split_sql(script):
                 db.execute(statement)
-
-    def run_script_unchecked(self, script):
-        """Apply a script without foreign-key enforcement (legacy rebuilds)."""
-        raise NotImplementedError(f'The {self.scheme} backend cannot run unchecked scripts.')
 
     @property
     def url(self):
