@@ -2,48 +2,39 @@
 
 The dashboard in ``network/`` depends on this package; this package never
 imports ``network/``, so every command runs standalone through
-``python -m db`` (init, migrate, status, backup, restore, import-sqlite).
+``python -m db`` (init, migrate, status, backup, restore).
 
-Supported database URLs:
+PostgreSQL is the only supported backend:
 
-    /path/to/network.db                SQLite file (bare path, local runs)
-    sqlite:///path/to/network.db       SQLite file
-    postgresql://user:pass@host:5432/khaya    PostgreSQL (needs psycopg 3)
+    postgresql://user:pass@host:5432/khaya
 
-Set KHAYA_DATABASE_URL to configure the environment once; explicit --url
-values and --db flags take precedence.
+Set KHAYA_DATABASE_URL to configure the environment once; explicit ``--url``
+values and ``--db`` flags take precedence.
 """
-from pathlib import Path
+import os
 from db.backend_postgres import PostgresBackend
-from db.backend_sqlite import SqliteBackend
 from db.core import Backend, redact_url, split_sql
 
 DATABASE_URL_ENV = 'KHAYA_DATABASE_URL'
-__all__ = ['Backend', 'SqliteBackend', 'PostgresBackend', 'open_backend', 'default_url', 'redact_url', 'split_sql', 'DATABASE_URL_ENV']
+__all__ = ['Backend', 'PostgresBackend', 'open_backend', 'resolve_url', 'redact_url', 'split_sql', 'DATABASE_URL_ENV']
+
+
+def resolve_url(url=None):
+    """Return an explicit URL, then KHAYA_DATABASE_URL; otherwise raise."""
+    resolved = url or os.environ.get(DATABASE_URL_ENV)
+    if not isinstance(resolved, str) or not resolved.strip():
+        raise ValueError(f'Provide a PostgreSQL URL with --url or --db, or set {DATABASE_URL_ENV}.')
+    return resolved.strip()
 
 
 def open_backend(url):
-    """Create the backend for a Backend, bare SQLite path, sqlite:// URL, or postgres URL."""
+    """Create the PostgreSQL backend for a postgres:// or postgresql:// URL."""
     if isinstance(url, Backend):
         return url
-    if isinstance(url, Path):
-        url = str(url)
     if not isinstance(url, str) or not url.strip():
-        raise ValueError('Provide a database URL such as sqlite:///data/network.db or postgresql://user:pass@host/db.')
+        raise ValueError('Provide a PostgreSQL URL such as postgresql://user:pass@host:5432/khaya.')
     url = url.strip()
-    if '://' in url:
-        scheme, _, rest = url.partition('://')
-        scheme = scheme.lower()
-        if scheme == 'sqlite':
-            return SqliteBackend(rest)
-        if scheme in ('postgres', 'postgresql'):
-            return PostgresBackend(url)
-        raise ValueError(f'Unsupported database scheme {scheme!r}; use sqlite or postgresql.')
-    if url.startswith('sqlite:'):
-        return SqliteBackend(url[len('sqlite:'):])
-    return SqliteBackend(url)
-
-
-def default_url():
-    """Return the bundled local SQLite URL used when nothing is configured."""
-    return f'sqlite://{Path(__file__).resolve().parent.parent / "data" / "network.db"}'
+    scheme, separator, _ = url.partition('://')
+    if not separator or scheme.lower() not in ('postgres', 'postgresql'):
+        raise ValueError(f'Unsupported database URL {url!r}; Khaya requires PostgreSQL.')
+    return PostgresBackend(url)

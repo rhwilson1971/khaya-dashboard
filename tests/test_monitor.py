@@ -1,14 +1,12 @@
 """Tests for bounded, safe network monitoring without scanning actual devices."""
 import subprocess
-import tempfile
 import threading
 import time
 import unittest
-from pathlib import Path
 from unittest.mock import patch
-from db.migrations import initialize
 from network.store import Store
 from network.monitor import probe, resolve_target, Collector
+from tests.support import postgres_database, requires_postgres
 
 
 class MonitorTests(unittest.TestCase):
@@ -48,11 +46,10 @@ class MonitorTests(unittest.TestCase):
         with patch('network.monitor.subprocess.run', return_value=subprocess.CompletedProcess([], 2, '', 'Operation not permitted')):
             self.assertIsNone(probe('192.168.1.10')['reachable'])
 
+    @requires_postgres
     def test_collector_skips_unmonitored_and_heartbeat_devices(self):
         """Probe only ICMP devices and record actual results."""
-        with tempfile.TemporaryDirectory() as directory:
-            url = f'sqlite://{Path(directory) / "db"}'
-            initialize(url)
+        with postgres_database() as url:
             store = Store(url)
             a = store.save_device({'name': 'PC', 'target': '192.168.1.10', 'type': 'computer'})
             store.save_device({'name': 'Tablet', 'target': '192.168.1.11', 'method': 'none'})
@@ -63,11 +60,10 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(len(store.history(a['id'])), 1)
             self.assertIsNotNone(collector.status()['last_cycle'])
 
+    @requires_postgres
     def test_discovery_is_bounded_and_returns_only_responders(self):
         """Scan a configured /30 and keep candidates outside real inventory."""
-        with tempfile.TemporaryDirectory() as directory:
-            url = f'sqlite://{Path(directory) / "db"}'
-            initialize(url)
+        with postgres_database() as url:
             store = Store(url)
             store.save_settings({'subnet': '192.168.1.0/30'})
             collector = Collector(store, probe_fn=lambda target: {'reachable': target.endswith('.1'), 'latency': 1, 'error': ''})
@@ -82,11 +78,10 @@ class MonitorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 collector.start_discovery('10.0.0.0/8')
 
+    @requires_postgres
     def test_heartbeat_expires_while_icmp_batch_is_blocked(self):
         """A slow ICMP batch must not delay the independent heartbeat timer."""
-        with tempfile.TemporaryDirectory() as directory:
-            url = f'sqlite://{Path(directory) / "db"}'
-            initialize(url)
+        with postgres_database() as url:
             store = Store(url)
             store.save_settings({'heartbeat_timeout': 30})
             computer = store.save_device({'name': 'Agent', 'target': '192.168.1.11', 'method': 'heartbeat'})

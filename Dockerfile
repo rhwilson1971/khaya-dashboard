@@ -1,6 +1,6 @@
 # Khaya collector + dashboard.
-# Stdlib-only Python app (Python 3.10+); the only OS dependency is the `ping` binary.
-# requirements.txt adds the optional psycopg driver for cluster-hosted PostgreSQL.
+# Python 3.12 app; PostgreSQL is the only supported database.
+# The only OS dependency is the `ping` binary.
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,7 +16,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Database driver for the PostgreSQL backend; SQLite-only deployments need nothing.
+# PostgreSQL driver (psycopg 3).
 COPY requirements.txt ./
 RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 
@@ -27,11 +27,8 @@ COPY db/ ./db/
 COPY static/ ./static/
 COPY heartbeat_agent.py ./
 
-# Writable location for the default SQLite path (data/network.db).
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p /app/data \
     && chown -R appuser:appuser /app
-VOLUME /app/data
 
 USER appuser
 
@@ -40,6 +37,8 @@ EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/snapshot', timeout=5)"
 
+# Provide KHAYA_DATABASE_URL at runtime and initialize the database first:
+#   docker run ... -e KHAYA_DATABASE_URL=postgresql://... khaya python3 -m db init
+#   docker run ... -e KHAYA_DATABASE_URL=postgresql://... -p 8765:8765 khaya
 # Bind 0.0.0.0 inside the container so the dashboard is reachable via published ports.
-# Override with: docker run ... khaya --host 127.0.0.1 --port 8766 --db postgresql://...
 CMD ["python3", "-m", "network.server", "--host", "0.0.0.0", "--port", "8765"]

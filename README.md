@@ -1,18 +1,20 @@
 # Khaya
 
-A local home network dashboard with device inventory, computer reachability, ICMP checks, authenticated computer heartbeats, explicit discovery, and an interactive topology map. Your inventory lives in a decoupled database: SQLite for local runs, or PostgreSQL hosted separately (for example, on a Kubernetes home cluster).
+A local home network dashboard with device inventory, computer reachability, ICMP checks, authenticated computer heartbeats, explicit discovery, and an interactive topology map. Your inventory lives in PostgreSQL, hosted separately from the app (for example, on a Kubernetes home cluster).
 
 ## Run
 
-Requires Python 3.10+ and your operating system's `ping` command. SQLite deployments need no package installation; the PostgreSQL backend adds one driver (`pip install "psycopg[binary]"`). Initialize the database once, then start the server:
+Requires Python 3.10+, PostgreSQL, your operating system's `ping` command, and the PostgreSQL driver (`pip install "psycopg[binary]"`). Initialize the database once, then start the server:
 
 ```sh
-cd /Users/drreubenwilson/dev/projects/home_network
+cd khaya-dashboard
+export KHAYA_DATABASE_URL='postgresql://user:password@host:5432/khaya'
+python3 -m pip install -r requirements.txt
 python3 -m db init
 python3 -m network.server
 ```
 
-Open **http://127.0.0.1:8765**. Keep the terminal process running for background collection. Stop it with Ctrl+C. The browser polls every five seconds; ICMP checks run every 30 seconds by default. Inventory, recent checks, and events survive restarts in `data/network.db`.
+Open **http://127.0.0.1:8765**. Keep the terminal process running for background collection. Stop it with Ctrl+C. The browser polls every five seconds; ICMP checks run every 30 seconds by default. Inventory, recent checks, and events survive restarts in PostgreSQL.
 
 The first empty inventory opens a clearly labeled sample network. Select **Use my network** to configure your real devices. Sample devices are isolated from persistence and never probed. Adding a real device switches the dashboard to your real inventory. A service-unavailable banner means health is not being collected; any previously displayed observations are stale.
 
@@ -27,7 +29,7 @@ Open `http://YOUR_COLLECTOR_HOSTNAME.boma.home.arpa:8765` from another device, u
 Choose another port or database if needed:
 
 ```sh
-python3 -m network.server --port 8766 --db /path/to/network.db
+python3 -m network.server --port 8766 --db postgresql://user:password@host:5432/khaya
 ```
 
 The database is deliberately decoupled from the application: the server never creates or migrates schema, and it refuses to start against an uninitialized database with the exact command to fix that. See **Database** below for URLs, standalone scripts, and moving to PostgreSQL.
@@ -48,19 +50,17 @@ If Pi-hole has no usable reverse record, properties show **No DNS name found**. 
 
 ## Database
 
-Storage lives behind a URL, and every database task runs without the dashboard through `python -m db`. The application depends on the `db` package; the `db` package never imports the application.
+Storage lives behind a PostgreSQL URL, and every database task runs without the dashboard through `python -m db`. The application depends on the `db` package; the `db` package never imports the application.
 
-Supported URLs:
+Supported URL:
 
 | URL | Backend |
 | --- | --- |
-| `/path/to/network.db` | SQLite file (bare path) |
-| `sqlite:///path/to/network.db` | SQLite file |
-| `postgresql://user:password@host:5432/khaya` | PostgreSQL (needs `pip install "psycopg[binary]"`) |
+| `postgresql://user:password@host:5432/khaya` | PostgreSQL (requires `psycopg[binary]`) |
 
-The server resolves its database from `--db`, then the `KHAYA_DATABASE_URL` environment variable, then the default `data/network.db`; startup prints the URL it chose with the password hidden. SQLite needs nothing beyond the standard library, and the portable SQL the app writes (upserts, `BEGIN IMMEDIATE` serialization) is translated per dialect.
+The server resolves its database from `--db`, then the `KHAYA_DATABASE_URL` environment variable. If neither is set, it refuses to start with a clear error. Startup prints the URL it chose with the password hidden. SQL uses PostgreSQL placeholders, and writers take a PostgreSQL advisory lock so concurrent topology edits cannot bypass cycle checks.
 
-Standalone commands (all accept `--url`, defaulting to `KHAYA_DATABASE_URL` or `data/network.db`):
+Standalone commands (all accept `--url`, defaulting to `KHAYA_DATABASE_URL`):
 
 ```sh
 python3 -m db init                # create schema, apply migrations, seed defaults (idempotent)
@@ -68,10 +68,9 @@ python3 -m db migrate             # apply pending schema migrations
 python3 -m db status              # show backend, migrations, and row counts
 python3 -m db backup --output FILE    # portable JSON dump of all tables
 python3 -m db restore --input FILE --yes   # replace database contents from a dump
-python3 -m db import-sqlite --sqlite PATH --yes   # copy an existing SQLite database in
 ```
 
-Backups are backend-neutral: a dump taken from SQLite restores into PostgreSQL and vice versa, preserving device identifiers, topology links, and auto-increment sequences. `import-sqlite` adopts databases from older application versions (including the legacy unique-address schema) — use it to move `data/network.db` into a cluster-hosted PostgreSQL.
+Backups are portable JSON and preserve device identifiers, topology links, and auto-increment sequences. SQLite is no longer supported; to move an old `data/network.db` inventory, use an older Khaya release to run `python3 -m db backup`, then restore that JSON dump with this version.
 
 ### Kubernetes
 
@@ -126,10 +125,10 @@ A heartbeat certifies that the agent could run and contact the collector. It doe
 
 ## Persistence and privacy
 
-- `data/network.db` (or your configured database URL): real inventory, settings, the latest 500 observations per device, and recent events. Schema creation and upgrades happen only through `python -m db`, never at server startup.
+- PostgreSQL (configured by `KHAYA_DATABASE_URL`): real inventory, settings, the latest 500 observations per device, and recent events. Schema creation and upgrades happen only through `python -m db`, never at server startup.
 - `static/sample-data.js` and `network/sample.py`: illustrative fixtures, independent of real inventory.
 - Browser storage: selected live/sample mode only.
-- No external fonts, analytics, cloud services, or JavaScript packages. The single optional Python dependency is the PostgreSQL driver.
+- No external fonts, analytics, cloud services, or JavaScript packages. The required Python dependency is the PostgreSQL driver.
 - API responses exclude heartbeat verifiers; heartbeat credentials are accepted only through `Authorization: Bearer …`.
 - Browser requests are guarded by private-IP or configured home-domain host validation, same-origin checks, JSON request bodies, and no CORS access. Loopback mode remains restricted to `localhost` and `127.0.0.1`. These guards are not a substitute for LAN access control.
 
@@ -143,15 +142,15 @@ node --test tests/frontend.test.cjs
 node --check static/app.js
 ```
 
-Python tests exercise Pi-hole DNS packets and transport, SQLite persistence and validation, topology cycles, probe result interpretation, thresholds, heartbeat destination pinning, authentication and expiry, collector behavior, discovery/import, and the actual HTTP request parser on an in-memory transport (which works in environments that prohibit listening sockets). They also cover the standalone database package: URL resolution, dialect translation, migration idempotency (including the legacy rebuild), portable backup/restore, and every `python -m db` command. Frontend tests exercise rendered state, DNS configuration display, escaping, search/filter logic, and graph topology using Node's built-in test runner; Node is needed only for those development checks.
+Python tests exercise Pi-hole DNS packets and transport, PostgreSQL persistence and validation, topology cycles, probe result interpretation, thresholds, heartbeat destination pinning, authentication and expiry, collector behavior, discovery/import, and the actual HTTP request parser on an in-memory transport (which works in environments that prohibit listening sockets). They also cover the standalone database package: URL resolution, migration idempotency, portable backup/restore, and every `python -m db` command. Frontend tests exercise rendered state, DNS configuration display, escaping, search/filter logic, and graph topology using Node's built-in test runner; Node is needed only for those development checks.
 
-PostgreSQL integration tests run when `KHAYA_TEST_POSTGRES_URL` points at a disposable database (and psycopg is installed):
+Database tests run when `KHAYA_TEST_POSTGRES_URL` points at a disposable database (and psycopg is installed); otherwise they are skipped:
 
 ```sh
 docker run --rm -d --name khaya-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_USER=khaya \
     -e POSTGRES_DB=khaya_test -p 5432:5432 postgres:17-alpine
 KHAYA_TEST_POSTGRES_URL=postgresql://khaya:test@localhost:5432/khaya_test \
-    python3 -m unittest tests.test_db_postgres -v
+    python3 -m unittest discover -s tests -v
 ```
 
 During development in this session, the sandbox blocked binding a local server and sending even a localhost ICMP packet. Browser policy also blocked opening a local-file preview. Automated tests and syntax checks can run here, but live server, real network discovery, browser interactions, and responsive visual QA require running the application outside this sandbox. No real home devices were discovered or configured during development.
